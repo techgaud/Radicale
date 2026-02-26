@@ -25,6 +25,15 @@ else
   echo "    jq: OK ($(jq --version))"
 fi
 
+# ─── NETCAT ─────────────────────────────────────────────────────────────────
+# Used by bridge-setup.sh to poll the IMAP port until Bridge is ready
+if ! command -v nc &>/dev/null; then
+  echo "    Installing netcat..."
+  sudo apt-get install -y netcat-openbsd
+else
+  echo "    netcat: OK"
+fi
+
 # ─── DOCKER ──────────────────────────────────────────────────────────────────
 if ! command -v docker &>/dev/null; then
   echo "    Installing Docker..."
@@ -90,14 +99,18 @@ fi
 
 if ! python3 -c "import imapclient" &>/dev/null; then
   echo "    Installing imapclient..."
-  pip3 install imapclient --break-system-packages
+  pip3 install imapclient --break-system-packages 2>/dev/null || \
+    pip3 install imapclient 2>/dev/null || \
+    sudo apt-get install -y python3-imapclient
 else
   echo "    imapclient: OK"
 fi
 
 if ! python3 -c "import icalendar" &>/dev/null; then
   echo "    Installing icalendar..."
-  pip3 install icalendar --break-system-packages
+  pip3 install icalendar --break-system-packages 2>/dev/null || \
+    pip3 install icalendar 2>/dev/null || \
+    sudo apt-get install -y python3-icalendar
 else
   echo "    icalendar: OK"
 fi

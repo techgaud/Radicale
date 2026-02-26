@@ -147,7 +147,26 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 echo ""
 read -rp "Press Enter when ready to start Bridge login..."
 
-protonmail-bridge --cli
+# Poll the IMAP port every 5 seconds until Bridge is actually accepting
+# connections, then hand control to the CLI.
+echo ""
+echo -n "    Starting Bridge"
+DISPLAY= protonmail-bridge --no-window &
+BRIDGE_BG_PID=$!
+
+while ! nc -z 127.0.0.1 1143 2>/dev/null; do
+  sleep 5
+  echo -n "."
+done
+
+kill $BRIDGE_BG_PID 2>/dev/null
+wait $BRIDGE_BG_PID 2>/dev/null || true
+
+echo ""
+echo "    Bridge is ready. Starting CLI..."
+echo ""
+
+DISPLAY= protonmail-bridge --cli
 
 echo ""
 read -rp "Enter the IMAP port Bridge reported (default 1143): " BRIDGE_IMAP_PORT
@@ -164,19 +183,32 @@ read -rp "Enter the IMAP password Bridge generated for your account: " BRIDGE_IM
 # and then re-run this script.
 # ─────────────────────────────────────────────────────────────────────────────
 echo ""
+echo "==> Waiting for Bridge IMAP to be ready..."
+while ! nc -z 127.0.0.1 "${BRIDGE_IMAP_PORT}" 2>/dev/null; do
+  sleep 2
+  echo -n "."
+done
+echo ""
 echo "==> Listing available IMAP folders from Bridge..."
 
-python3 - <<PYEOF
-import sys
+BRIDGE_IMAP_PORT="$BRIDGE_IMAP_PORT" \
+PROTON_EMAIL="$PROTON_EMAIL" \
+BRIDGE_IMAP_PASS="$BRIDGE_IMAP_PASS" \
+python3 - <<'PYEOF'
+import sys, os
 try:
     from imapclient import IMAPClient
 except ImportError:
     print("ERROR: imapclient not installed. Run check-deps.sh first.")
     sys.exit(1)
 
+port = int(os.environ["BRIDGE_IMAP_PORT"])
+email = os.environ["PROTON_EMAIL"]
+password = os.environ["BRIDGE_IMAP_PASS"]
+
 try:
-    with IMAPClient("127.0.0.1", port=${BRIDGE_IMAP_PORT}, ssl=False) as client:
-        client.login("${PROTON_EMAIL}", "${BRIDGE_IMAP_PASS}")
+    with IMAPClient("127.0.0.1", port=port, ssl=False) as client:
+        client.login(email, password)
         folders = client.list_folders()
         print("")
         print("    Available folders:")
@@ -227,6 +259,7 @@ After=network.target
 
 [Service]
 Type=simple
+Environment=DISPLAY=
 ExecStart=/usr/bin/protonmail-bridge --no-window
 Restart=on-failure
 RestartSec=5

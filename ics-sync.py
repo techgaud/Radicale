@@ -44,6 +44,7 @@ except ImportError:
 try:
     import urllib.request
     import urllib.error
+    import urllib.parse
     import base64
 except ImportError:
     print("ERROR: urllib is not available. This should not happen on Python 3.")
@@ -135,6 +136,74 @@ log.info(f"Loaded {len(processed_ids)} previously processed message IDs from log
 # HELPERS
 # ─────────────────────────────────────────────────────────────────────────────
 
+def ensure_calendar_exists() -> bool:
+    """
+    Create the Radicale calendar collection if it does not already exist.
+    Uses MKCOL with a CalDAV resourcetype. Safe to call on every run —
+    if the collection already exists Radicale returns 405 which we ignore.
+    """
+    credentials = base64.b64encode(
+        f"{RADICALE_USER}:{RADICALE_PASS}".encode()
+    ).decode()
+
+    mkcol_body = """<?xml version="1.0" encoding="UTF-8"?>
+<mkcol xmlns="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">
+  <set>
+    <prop>
+      <resourcetype>
+        <collection/>
+        <C:calendar/>
+      </resourcetype>
+    </prop>
+  </set>
+</mkcol>""".encode()
+
+    request = urllib.request.Request(
+        RADICALE_URL,
+        data=mkcol_body,
+        method="MKCOL",
+        headers={
+            "Content-Type": "application/xml",
+            "Authorization": f"Basic {credentials}",
+            "User-Agent": "ics-sync/1.0",
+        }
+    )
+
+    # First check if the collection already exists with a GET
+    credentials = base64.b64encode(
+        f"{RADICALE_USER}:{RADICALE_PASS}".encode()
+    ).decode()
+    get_request = urllib.request.Request(
+        RADICALE_URL,
+        method="GET",
+        headers={"Authorization": f"Basic {credentials}", "User-Agent": "ics-sync/1.0"}
+    )
+    try:
+        with urllib.request.urlopen(get_request) as response:
+            log.info("Calendar collection already exists.")
+            return True
+    except urllib.error.HTTPError as e:
+        if e.code != 404:
+            # Exists but returned something unexpected — try to proceed anyway
+            log.info(f"Calendar collection check returned {e.code}, assuming it exists.")
+            return True
+        # 404 means it doesn't exist, fall through to MKCOL
+
+    try:
+        with urllib.request.urlopen(request) as response:
+            log.info(f"Calendar collection created at {RADICALE_URL}")
+            return True
+    except urllib.error.HTTPError as e:
+        if e.code in (405, 403):
+            log.info("Calendar collection already exists.")
+            return True
+        log.error(f"Failed to create calendar collection: HTTP {e.code} {e.reason}")
+        return False
+    except urllib.error.URLError as e:
+        log.error(f"Failed to create calendar collection: {e.reason}")
+        return False
+
+
 def push_to_radicale(uid: str, ics_data: bytes) -> bool:
     """
     Push a single .ics file to Radicale via CalDAV PUT.
@@ -142,7 +211,8 @@ def push_to_radicale(uid: str, ics_data: bytes) -> bool:
     re-pushing the same event overwrites it rather than creating a duplicate.
     Returns True on success, False on failure.
     """
-    url = f"{RADICALE_URL}{uid}.ics"
+    safe_uid = urllib.parse.quote(uid, safe="")
+    url = f"{RADICALE_URL}{safe_uid}.ics"
     credentials = base64.b64encode(
         f"{RADICALE_USER}:{RADICALE_PASS}".encode()
     ).decode()
@@ -154,6 +224,7 @@ def push_to_radicale(uid: str, ics_data: bytes) -> bool:
         headers={
             "Content-Type": "text/calendar; charset=utf-8",
             "Authorization": f"Basic {credentials}",
+            "User-Agent": "ics-sync/1.0",
         }
     )
 
@@ -193,6 +264,10 @@ def log_processed(message_id: str):
 # MAIN
 # ─────────────────────────────────────────────────────────────────────────────
 def main():
+    if not ensure_calendar_exists():
+        log.error("Cannot proceed without a valid Radicale calendar collection.")
+        sys.exit(1)
+
     log.info(f"Connecting to Bridge IMAP at 127.0.0.1:{BRIDGE_IMAP_PORT}...")
 
     try:
