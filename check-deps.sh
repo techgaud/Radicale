@@ -146,12 +146,20 @@ export PATH="$PATH:$(go env GOPATH)/bin"
 # Holds an IMAP IDLE connection open against Bridge and fires ics-sync.py
 # the moment new mail arrives in the watched folder.
 # Source: https://gitlab.com/shackra/goimapnotify
+#
+# goimapnotify has no binary releases and 'go install' does not work because
+# the module has no semver tags and the main package is under ./cmd/.
+# The correct approach is to clone and build from source.
 if ! command -v goimapnotify &>/dev/null; then
-  echo "    Installing goimapnotify..."
-  go install gitlab.com/shackra/goimapnotify@latest
-  # Symlink into /usr/local/bin so it is available system-wide
-  sudo ln -sf "$(go env GOPATH)/bin/goimapnotify" /usr/local/bin/goimapnotify
-  echo "    goimapnotify installed."
+  echo "    Installing goimapnotify from source..."
+  rm -rf /tmp/goimapnotify
+  git clone https://gitlab.com/shackra/goimapnotify.git /tmp/goimapnotify
+  cd /tmp/goimapnotify
+  go build -o goimapnotify ./cmd/...
+  sudo mv goimapnotify /usr/local/bin/goimapnotify
+  cd - > /dev/null
+  rm -rf /tmp/goimapnotify
+  echo "    goimapnotify installed: $(goimapnotify -h 2>&1 | head -n1 || echo OK)"
 else
   echo "    goimapnotify: OK"
 fi
