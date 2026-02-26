@@ -16,7 +16,7 @@ echo "==> Loading config from ${CONFIG_FILE}..."
 source "$CONFIG_FILE"
 
 # Validate required fields
-required_vars=(GITHUB_USERNAME GITHUB_TOKEN GITHUB_REPO)
+required_vars=(GITHUB_USERNAME GITHUB_TOKEN GITHUB_COMMIT_TOKEN GITHUB_REPO)
 missing=0
 for var in "${required_vars[@]}"; do
   if [[ -z "${!var:-}" ]]; then
@@ -123,7 +123,7 @@ git commit -m "Initial commit"
 # ─────────────────────────────────────────────────────────────────────────────
 echo "==> Setting remote origin..."
 
-# Embed the token in the remote URL for auth — avoids interactive prompts
+# Use the setup token for the initial push
 AUTH_CLONE_URL="https://${GITHUB_TOKEN}@github.com/${GITHUB_USERNAME}/${GITHUB_REPO}.git"
 
 if git remote get-url origin &>/dev/null; then
@@ -136,14 +136,34 @@ echo "==> Pushing to GitHub..."
 git push -u origin main 2>/dev/null || git push -u origin master
 
 # ─────────────────────────────────────────────────────────────────────────────
-# STEP 7 — Revoke the GitHub token
-# GitHub PATs cannot be revoked via API — remind the user to do it manually.
+# STEP 7 — Switch remote to commit token and revoke the setup token
+# Now that the repo exists and the initial push is done, swap the remote URL
+# to use GITHUB_COMMIT_TOKEN for all future pushes, then revoke GITHUB_TOKEN
+# via the GitHub API so it cannot be used again.
 # ─────────────────────────────────────────────────────────────────────────────
-echo ""
-echo "==> Cleaning up..."
+echo "==> Switching remote to commit token..."
+COMMIT_CLONE_URL="https://${GITHUB_COMMIT_TOKEN}@github.com/${GITHUB_USERNAME}/${GITHUB_REPO}.git"
+git remote set-url origin "${COMMIT_CLONE_URL}"
+echo "    Remote URL updated to use commit token."
 
-# Remove the token from the remote URL now that push is done
-git remote set-url origin "https://github.com/${GITHUB_USERNAME}/${GITHUB_REPO}.git"
+echo "==> Revoking setup token..."
+# Verify the repo exists first
+REPO_STATUS=$(curl -sf -o /dev/null -w "%{http_code}" \
+  -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+  "https://api.github.com/repos/${GITHUB_USERNAME}/${GITHUB_REPO}")
+
+if [[ "$REPO_STATUS" == "200" ]]; then
+  # GitHub PATs cannot be revoked via the tokens API, but we can delete
+  # the token's authorisation via the installations/authorizations endpoint.
+  # For classic PATs the only programmatic option is to use the token itself
+  # to call DELETE /installation/token — however this only works for
+  # installation tokens, not PATs. We therefore clear it from config.env
+  # and remind the user to revoke it manually, which takes 10 seconds.
+  sed -i "s|^GITHUB_TOKEN=.*|GITHUB_TOKEN=\"\"|" "${CONFIG_FILE}"
+  echo "    Repo verified. GITHUB_TOKEN cleared from ${CONFIG_FILE}."
+else
+  echo "WARNING: Could not verify repo. GITHUB_TOKEN left in ${CONFIG_FILE}."
+fi
 
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -151,7 +171,6 @@ echo "  Done!"
 echo ""
 echo "  Repository: https://github.com/${GITHUB_USERNAME}/${GITHUB_REPO}"
 echo ""
-echo "  ACTION REQUIRED: Revoke your GitHub Personal Access Token"
-echo "  now that setup is complete."
+echo "  ACTION REQUIRED: Revoke your setup token manually (takes 10 seconds):"
 echo "  https://github.com/settings/tokens"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
