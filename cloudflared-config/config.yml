@@ -1,0 +1,7 @@
+tunnel: db076a53-2192-4342-8157-2c1e7165eaed
+credentials-file: /etc/cloudflared/creds/db076a53-2192-4342-8157-2c1e7165eaed.json
+
+ingress:
+  - hostname: radicale.natecalvert.org
+    service: http://radicale:5232
+  - service: http_status:404

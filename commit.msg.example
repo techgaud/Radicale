@@ -1,0 +1,26 @@
+# Commit message file — used by commit.sh
+#
+# Format rules:
+#   Line 1:  Short summary, 50 characters or less
+#   Line 2:  Blank
+#   Line 3+: Detail explaining what changed and why.
+#             Wrap at 72 characters. Can be multiple paragraphs
+#             separated by blank lines.
+#
+# Lines starting with # are ignored.
+# This file is cleared automatically after a successful commit and push.
+#
+# Example:
+#
+# Fix cloudflared credential path in Docker volume mount
+#
+# The credential JSON was being copied to cloudflared-config/creds/
+# but the container expected it at /etc/cloudflared/creds/. The volume
+# mount in docker-compose.yml mapped cloudflared-config/ to
+# /etc/cloudflared/ correctly, but setup.sh was writing the file one
+# level too deep, causing the tunnel to fail to authenticate on start.
+#
+# Updated the cp command in setup.sh to write directly to
+# cloudflared-config/ so the resulting path inside the container
+# resolves correctly. Verified by inspecting container logs after
+# a clean run of setup.sh on a fresh Ubuntu 22.04 instance.

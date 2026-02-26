@@ -1,0 +1,20 @@
+services:
+  radicale:
+    image: tomsquest/docker-radicale
+    container_name: radicale
+    expose:
+      - "5232"
+    volumes:
+      - ./data:/data
+      - ./config:/config
+    restart: unless-stopped
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: cloudflared
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run
+    volumes:
+      - ./cloudflared-config:/etc/cloudflared
+    depends_on:
+      - radicale
