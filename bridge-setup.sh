@@ -131,20 +131,23 @@ echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "  MANUAL STEP REQUIRED: Proton Bridge login"
 echo ""
-echo "  Bridge will now start in CLI mode. You will be prompted for:"
-echo "    1. Your Proton Mail email address"
-echo "    2. Your Proton Mail password"
-echo "    3. Your 2FA TOTP code"
+echo "  Bridge will now start in CLI mode. Follow these steps:"
 echo ""
-echo "  After logging in:"
-echo "    - Type 'info' to see the IMAP port and generated IMAP password"
-echo "    - Note both values down, you will need to enter them next"
-echo "    - Type 'exit' to return to this script"
+echo "  1. At the >>> prompt, type: login"
+echo "  2. Enter your Proton Mail email address"
+echo "  3. Enter your Proton Mail password"
+echo "  4. Enter your 2FA TOTP code"
+echo "  5. Once logged in, type: info"
+echo "  6. Note down the IMAP port and IMAP password shown"
+echo "  7. Type: exit"
+echo ""
+echo "  NOTE: Bridge may take 20-30 seconds to show the >>> prompt."
+echo "        Be patient and do not Ctrl+C."
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
 read -rp "Press Enter when ready to start Bridge login..."
 
-proton-bridge --cli
+protonmail-bridge --cli
 
 echo ""
 read -rp "Enter the IMAP port Bridge reported (default 1143): " BRIDGE_IMAP_PORT
@@ -224,7 +227,7 @@ After=network.target
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/proton-bridge --no-window
+ExecStart=/usr/bin/protonmail-bridge --no-window
 Restart=on-failure
 RestartSec=5
 

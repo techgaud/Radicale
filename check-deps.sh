@@ -146,16 +146,17 @@ fi
 # ─── PROTON BRIDGE ───────────────────────────────────────────────────────────
 # Bridge exposes a local IMAP/SMTP interface that decrypts Proton Mail on
 # the fly. Requires a paid Proton plan.
-if ! command -v proton-bridge &>/dev/null; then
+if ! command -v protonmail-bridge &>/dev/null; then
   echo "    Installing Proton Bridge..."
   BRIDGE_VERSION=$(curl -sf https://api.github.com/repos/ProtonMail/proton-bridge/releases/latest | \
     jq -r '.tag_name' | sed 's/^v//')
-  curl -fsSL "https://github.com/ProtonMail/proton-bridge/releases/download/v${BRIDGE_VERSION}/proton-bridge_${BRIDGE_VERSION}-1_amd64.deb" \
+  curl -fsSL "https://proton.me/download/bridge/protonmail-bridge_${BRIDGE_VERSION}-1_amd64.deb" \
     -o /tmp/proton-bridge.deb
-  sudo dpkg -i /tmp/proton-bridge.deb || sudo apt-get install -f -y
-  rm /tmp/proton-bridge.deb
+  sudo dpkg -i /tmp/proton-bridge.deb || true
+  sudo apt-get install -f -y
+  rm -f /tmp/proton-bridge.deb
 else
-  echo "    Proton Bridge: OK"
+  echo "    Proton Bridge: OK ($(protonmail-bridge --version 2>/dev/null || echo installed))"
 fi
 
 # ─── GIT ────────────────────────────────────────────────────────────────────
