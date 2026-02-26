@@ -7,15 +7,26 @@ set -euo pipefail
 # One-time setup script that:
 #   1. Generates a GPG key pair using the passphrase from config.env
 #   2. Initialises pass with that key
-#   3. Walks through the interactive Proton Bridge CLI login
-#   4. Lists available IMAP folders and confirms the watched folder
-#   5. Writes Bridge credentials back to config.env
-#   6. Registers Bridge as a systemd user service
-#   7. Writes the goimapnotify config
-#   8. Registers goimapnotify as a systemd user service
+#   3. Starts Bridge headlessly, waits for IMAP to confirm it works
+#   4. Kills Bridge, then runs the CLI for interactive login
+#   5. Restarts Bridge headlessly, lists available IMAP folders
+#   6. Writes Bridge credentials and confirmed folder back to config.env
+#   7. Registers Bridge as a systemd user service
+#   8. Writes the goimapnotify config
+#   9. Registers goimapnotify as a systemd user service
+#
+# IMPORTANT: Bridge on Linux requires QT_QPA_PLATFORM=offscreen to run
+# headlessly. Without it the Qt xcb platform plugin will crash immediately.
+# This env var is set for all Bridge invocations in this script and in the
+# systemd service file.
+#
+# IMPORTANT: Bridge's CLI mode and --no-window mode share a lock file at
+# ~/.cache/protonmail/bridge-v3/bridge-v3-gui.lock. They cannot run at the
+# same time. This script carefully kills any running instance before switching
+# between modes.
 #
 # Run this once after check-deps.sh. Do not run it again unless you are
-# doing a clean reinstall — it will overwrite your GPG key and pass store.
+# doing a clean reinstall -- it will overwrite your GPG key and pass store.
 # ─────────────────────────────────────────────────────────────────────────────
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -45,7 +56,33 @@ done
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # ─────────────────────────────────────────────────────────────────────────────
-# STEP 1 — Generate GPG key
+# HELPER: kill any running Bridge instance and remove the lock file
+# ─────────────────────────────────────────────────────────────────────────────
+kill_bridge() {
+  pkill -f bridge-gui 2>/dev/null || true
+  pkill -f "/usr/lib/protonmail/bridge/bridge " 2>/dev/null || true
+  sleep 3
+  rm -f ~/.cache/protonmail/bridge-v3/bridge-v3-gui.lock
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# HELPER: start Bridge headlessly in the background and wait for IMAP
+# Prints dots while waiting. Sets BRIDGE_BG_PID.
+# ─────────────────────────────────────────────────────────────────────────────
+start_bridge_headless() {
+  echo -n "    Starting Bridge"
+  QT_QPA_PLATFORM=offscreen DISPLAY= protonmail-bridge --no-window &
+  BRIDGE_BG_PID=$!
+  while ! nc -z 127.0.0.1 1143 2>/dev/null; do
+    sleep 5
+    echo -n "."
+  done
+  echo ""
+  echo "    Bridge is ready."
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# STEP 1 -- Generate GPG key
 # We generate a non-expiring RSA 4096 key using the passphrase from config.env.
 # The key is used by pass to encrypt Bridge credentials at rest.
 # gpg-agent will be configured to pre-load the passphrase so that Bridge
@@ -83,7 +120,7 @@ GPG_KEY_ID=$(gpg --list-keys --with-colons "${PROTON_EMAIL}" | \
 echo "    Key fingerprint: ${GPG_KEY_ID}"
 
 # ─────────────────────────────────────────────────────────────────────────────
-# STEP 2 — Configure gpg-agent to cache the passphrase
+# STEP 2 -- Configure gpg-agent to cache the passphrase
 # default-cache-ttl and max-cache-ttl are set to 0 to cache indefinitely.
 # allow-preset-passphrase enables pre-loading the passphrase at login so
 # unattended processes like Bridge and ics-sync.py never prompt for it.
@@ -109,7 +146,7 @@ KEYGRIP=$(gpg --with-keygrip --list-keys "${PROTON_EMAIL}" | \
 echo "    gpg-agent configured and passphrase pre-loaded."
 
 # ─────────────────────────────────────────────────────────────────────────────
-# STEP 3 — Initialise pass
+# STEP 3 -- Initialise pass
 # ─────────────────────────────────────────────────────────────────────────────
 echo "==> Initialising pass with key ${GPG_KEY_ID}..."
 
@@ -121,19 +158,30 @@ else
 fi
 
 # ─────────────────────────────────────────────────────────────────────────────
-# STEP 4 — Interactive Proton Bridge login
+# STEP 4 -- Interactive Proton Bridge login
+#
+# Bridge's CLI and headless modes share a lock file and cannot run at the
+# same time. The sequence here is:
+#
+#   a. Kill any running Bridge instance
+#   b. Start Bridge headlessly and wait for IMAP port to confirm it works
+#      (this loads the pass store and initialises Bridge's internal state)
+#   c. Kill Bridge again
+#   d. Launch Bridge in CLI mode for interactive login
+#   e. After the user types 'exit', Bridge stops
+#   f. Restart Bridge headlessly for the folder listing step
+#
 # This is the one step that cannot be automated. Bridge needs your Proton
 # credentials and your 2FA TOTP code entered interactively.
-# After logging in, run 'info' to confirm Bridge is running and note the
-# IMAP port and Bridge-generated IMAP password, then type 'exit'.
 # ─────────────────────────────────────────────────────────────────────────────
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "  MANUAL STEP REQUIRED: Proton Bridge login"
 echo ""
-echo "  Bridge will now start in CLI mode. Follow these steps:"
+echo "  Bridge will start, then switch to CLI mode for login."
+echo "  Follow these steps at the >>> prompt:"
 echo ""
-echo "  1. At the >>> prompt, type: login"
+echo "  1. Type: login"
 echo "  2. Enter your Proton Mail email address"
 echo "  3. Enter your Proton Mail password"
 echo "  4. Enter your 2FA TOTP code"
@@ -141,33 +189,28 @@ echo "  5. Once logged in, type: info"
 echo "  6. Note down the IMAP port and IMAP password shown"
 echo "  7. Type: exit"
 echo ""
-echo "  NOTE: Bridge may take 20-30 seconds to show the >>> prompt."
-echo "        Be patient and do not Ctrl+C."
+echo "  NOTE: Bridge may take 60+ seconds to initialise the first time."
+echo "        Dots will appear while waiting. Do not Ctrl+C."
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
-read -rp "Press Enter when ready to start Bridge login..."
+read -rp "Press Enter when ready..."
 
-# Poll the IMAP port every 5 seconds until Bridge is actually accepting
-# connections, then hand control to the CLI.
+# Kill any existing Bridge instance
+kill_bridge
+
+# Start headlessly first to initialise Bridge's internal state via pass
 echo ""
-echo -n "    Starting Bridge"
-DISPLAY= protonmail-bridge --no-window &
-BRIDGE_BG_PID=$!
+start_bridge_headless
 
-while ! nc -z 127.0.0.1 1143 2>/dev/null; do
-  sleep 5
-  echo -n "."
-done
+# Kill the headless instance so CLI can take the lock
+kill_bridge
 
-kill $BRIDGE_BG_PID 2>/dev/null
-wait $BRIDGE_BG_PID 2>/dev/null || true
-
+# Now launch CLI for interactive login
+echo "    Starting Bridge CLI..."
 echo ""
-echo "    Bridge is ready. Starting CLI..."
-echo ""
+QT_QPA_PLATFORM=offscreen DISPLAY= protonmail-bridge --cli
 
-DISPLAY= protonmail-bridge --cli
-
+# After the user types 'exit', Bridge has stopped
 echo ""
 read -rp "Enter the IMAP port Bridge reported (default 1143): " BRIDGE_IMAP_PORT
 BRIDGE_IMAP_PORT="${BRIDGE_IMAP_PORT:-1143}"
@@ -175,21 +218,24 @@ BRIDGE_IMAP_PORT="${BRIDGE_IMAP_PORT:-1143}"
 read -rp "Enter the IMAP password Bridge generated for your account: " BRIDGE_IMAP_PASS
 
 # ─────────────────────────────────────────────────────────────────────────────
-# STEP 4b — List available IMAP folders and confirm the watched folder
-# Connects to Bridge's local IMAP and prints every available folder so you
-# can confirm the exact name and capitalisation of the folder you want to
-# watch. The folder name in config.env must match exactly what Bridge reports.
-# If the folder you want does not exist yet, create it in Proton Mail first
-# and then re-run this script.
+# STEP 5 -- List available IMAP folders and confirm the watched folder
+#
+# Restart Bridge headlessly so we can connect to the IMAP port and list
+# folders. The lock was released when the CLI exited.
 # ─────────────────────────────────────────────────────────────────────────────
 echo ""
-echo "==> Waiting for Bridge IMAP to be ready..."
+echo "==> Restarting Bridge headlessly for folder listing..."
+kill_bridge
+start_bridge_headless
+
+echo "==> Waiting for Bridge IMAP port ${BRIDGE_IMAP_PORT} to be ready..."
 while ! nc -z 127.0.0.1 "${BRIDGE_IMAP_PORT}" 2>/dev/null; do
   sleep 2
   echo -n "."
 done
 echo ""
-echo "==> Listing available IMAP folders from Bridge..."
+
+echo "==> Listing available IMAP folders..."
 
 BRIDGE_IMAP_PORT="$BRIDGE_IMAP_PORT" \
 PROTON_EMAIL="$PROTON_EMAIL" \
@@ -231,10 +277,11 @@ else
   echo "    Keeping PROTON_FOLDER as: ${PROTON_FOLDER}"
 fi
 
+# Kill the headless instance -- systemd will take over from here
+kill_bridge
+
 # ─────────────────────────────────────────────────────────────────────────────
-# STEP 4c — Write Bridge credentials back to config.env
-# Saves the port and password so ics-sync.py can read them without arguments.
-# Uses sed to replace the placeholder values already in config.env.
+# STEP 6 -- Write Bridge credentials back to config.env
 # ─────────────────────────────────────────────────────────────────────────────
 echo "==> Writing Bridge credentials back to ${CONFIG_FILE}..."
 sed -i "s|^BRIDGE_IMAP_PORT=.*|BRIDGE_IMAP_PORT=\"${BRIDGE_IMAP_PORT}\"|" "${CONFIG_FILE}"
@@ -242,11 +289,15 @@ sed -i "s|^BRIDGE_IMAP_PASS=.*|BRIDGE_IMAP_PASS=\"${BRIDGE_IMAP_PASS}\"|" "${CON
 echo "    Bridge IMAP port and password saved to ${CONFIG_FILE}."
 
 # ─────────────────────────────────────────────────────────────────────────────
-# STEP 5 — Register Bridge as a systemd user service
-# Running as a user service means Bridge starts at boot without needing root
-# and has access to the user's GPG keyring and pass store.
-# loginctl enable-linger allows user services to start at boot even without
-# an active login session.
+# STEP 7 -- Register Bridge as a systemd user service
+#
+# QT_QPA_PLATFORM=offscreen is required for headless operation on Linux.
+# Without it, Bridge crashes immediately trying to load the Qt xcb plugin.
+#
+# Running as a user service means Bridge starts at boot without root and
+# has access to the user's GPG keyring and pass store.
+# loginctl enable-linger allows user services to start without an active
+# login session.
 # ─────────────────────────────────────────────────────────────────────────────
 echo "==> Registering Proton Bridge as a systemd user service..."
 
@@ -260,6 +311,7 @@ After=network.target
 [Service]
 Type=simple
 Environment=DISPLAY=
+Environment=QT_QPA_PLATFORM=offscreen
 ExecStart=/usr/bin/protonmail-bridge --no-window
 Restart=on-failure
 RestartSec=5
@@ -277,39 +329,35 @@ sudo loginctl enable-linger "$USER"
 echo "    Linger enabled for ${USER}."
 
 # ─────────────────────────────────────────────────────────────────────────────
-# STEP 6 — Write goimapnotify config
-# goimapnotify holds an IMAP IDLE connection open against Bridge's local IMAP
-# server. When new mail arrives in PROTON_FOLDER it immediately fires
-# ics-sync.py rather than waiting for a polling interval.
+# STEP 8 -- Write goimapnotify config
+#
+# goimapnotify v2.x requires a YAML config file with a "configurations" array
+# wrapper. The old flat JSON format (.conf) is no longer supported and will
+# fail with "Unsupported Config Type". The file extension must be .yaml.
 # ─────────────────────────────────────────────────────────────────────────────
 echo "==> Writing goimapnotify config..."
 
 mkdir -p ~/.config/goimapnotify
 
-cat > ~/.config/goimapnotify/goimapnotify.conf <<EOF
-{
-  "host": "127.0.0.1",
-  "port": ${BRIDGE_IMAP_PORT},
-  "tls": false,
-  "tlsOptions": {
-    "rejectUnauthorized": false
-  },
-  "username": "${PROTON_EMAIL}",
-  "password": "${BRIDGE_IMAP_PASS}",
-  "boxes": [
-    {
-      "mailbox": "${PROTON_FOLDER}",
-      "onNewMail": "python3 ${SCRIPT_DIR}/ics-sync.py",
-      "onNewMailPost": ""
-    }
-  ]
-}
+cat > ~/.config/goimapnotify/goimapnotify.yaml <<EOF
+configurations:
+  - host: 127.0.0.1
+    port: ${BRIDGE_IMAP_PORT}
+    tls: false
+    tlsOptions:
+      rejectUnauthorized: false
+    username: ${PROTON_EMAIL}
+    password: ${BRIDGE_IMAP_PASS}
+    boxes:
+      - mailbox: "${PROTON_FOLDER}"
+        onNewMail: "python3 ${SCRIPT_DIR}/ics-sync.py"
+        onNewMailPost: "SKIP"
 EOF
 
 echo "    goimapnotify config written."
 
 # ─────────────────────────────────────────────────────────────────────────────
-# STEP 7 — Register goimapnotify as a systemd user service
+# STEP 9 -- Register goimapnotify as a systemd user service
 # ─────────────────────────────────────────────────────────────────────────────
 echo "==> Registering goimapnotify as a systemd user service..."
 
@@ -321,7 +369,7 @@ Requires=proton-bridge.service
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/goimapnotify -conf %h/.config/goimapnotify/goimapnotify.conf
+ExecStart=/usr/local/bin/goimapnotify -conf %h/.config/goimapnotify/goimapnotify.yaml
 Restart=on-failure
 RestartSec=10
 
@@ -335,7 +383,7 @@ systemctl --user start goimapnotify
 echo "    goimapnotify service enabled and started."
 
 # ─────────────────────────────────────────────────────────────────────────────
-# STEP 8 — Create the log file if it does not exist
+# STEP 10 -- Create the log file if it does not exist
 # ─────────────────────────────────────────────────────────────────────────────
 echo "==> Ensuring log file exists at ${ICS_SYNC_LOG}..."
 

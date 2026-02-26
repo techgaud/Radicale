@@ -8,6 +8,10 @@ config.env
 # Active commit message — often in a half-written state, not useful to track
 commit.msg
 
+# Local handoff and instruction documents
+first_steps.md
+project_instructions.md
+
 # Log files
 logs/*.log
 
