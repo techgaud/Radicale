@@ -9,6 +9,24 @@ services:
       - ./config:/config
     restart: unless-stopped
 
+  agendav:
+    image: ghcr.io/nagimov/agendav-docker:latest
+    container_name: agendav
+    expose:
+      - "8080"
+    environment:
+      - AGENDAV_SERVER_NAME=calendar.natecalvert.org
+      - AGENDAV_TITLE=Calendar
+      - AGENDAV_FOOTER=natecalvert.org
+      - AGENDAV_CALDAV_SERVER=http://radicale:5232
+      - AGENDAV_CALDAV_PUBLIC_URL=https://radicale.natecalvert.org
+      - AGENDAV_TIMEZONE=America/New_York
+      - AGENDAV_LANG=en
+      - AGENDAV_LOG_DIR=/tmp/
+    restart: unless-stopped
+    depends_on:
+      - radicale
+
   cloudflared:
     image: cloudflare/cloudflared:latest
     container_name: cloudflared
@@ -18,3 +36,4 @@ services:
       - ./cloudflared-config:/etc/cloudflared
     depends_on:
       - radicale
+      - agendav
