@@ -8,9 +8,14 @@ config.env
 # Active commit message — often in a half-written state, not useful to track
 commit.msg
 
-# Local handoff and instruction documents
+# Local handoff and instruction documents (real files, gitignored)
 first_steps.md
 project_instructions.md
+project_knowledge.md
+
+# Keep the example templates tracked
+!project_instructions.md.example
+!project_knowledge.md.example
 
 # Log files
 logs/*.log

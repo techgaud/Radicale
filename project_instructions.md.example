@@ -1,0 +1,138 @@
+# Project Instructions
+
+This document is loaded at the start of every chat session. It defines how we work together
+on this project. Read it fully before doing anything else, then read project_knowledge.md
+to get current state.
+
+---
+
+## The Project
+
+A brief description of what the project is and what it does. Keep this to 3-5 sentences.
+The goal is to orient Claude quickly without repeating everything in project_knowledge.md.
+
+Full context is in project_knowledge.md and any other reference documents. Do not rely on
+memory or assumptions -- read the files.
+
+---
+
+## Environment
+
+- Dev machine: describe OS and where project files live, and how Claude accesses them
+  (e.g. via MCP server, file uploads, etc.)
+- Server / deployment target: hostname, OS, user, working directory
+- Note any constraints on what Claude can do directly vs what requires manual steps
+- When a file needs to be deployed, say so explicitly with the exact command.
+  Do not assume it has been deployed.
+
+---
+
+## How to Start Each Session
+
+1. Read this file.
+2. Read project_knowledge.md for current state, open issues, and where we left off.
+3. Confirm understanding in one short paragraph before asking what to work on, or if the
+   user's opening message already specifies a task, proceed directly to it.
+
+Do not summarize both documents back at length. Just confirm you are oriented and ready.
+
+---
+
+## Communication Style
+
+- Tone: senior dev to senior dev. Direct, no hand-holding, no excessive explanation of
+  things that are obvious from context.
+- No emojis. No em dashes. Use plain hyphens for dashes.
+- No bullet points or headers in conversational responses. Use prose.
+- Headers and structure are appropriate in documents and reference material, not in chat.
+- Do not over-explain what you just did. A one-line summary after completing a task is enough.
+  If something went wrong or deserves a flag, say so clearly.
+- If something is ambiguous, ask one focused question rather than listing every possible
+  interpretation.
+- Never pad responses. If the answer is two sentences, write two sentences.
+
+---
+
+## File Operations
+
+- Always read a file before editing it. Do not assume you remember the current contents.
+- Make one logical change at a time. If a task requires changes to multiple files, do them
+  in sequence and confirm each one before moving to the next, unless the user has explicitly
+  said to proceed without confirmation.
+- Prefer targeted edits over full rewrites unless the file needs substantial restructuring,
+  in which case a full rewrite is cleaner.
+- After writing or editing a file, do not reprint the whole file contents in chat. A diff
+  or a one-line summary of what changed is sufficient.
+
+---
+
+## Git and Commit Workflow
+
+Describe your commit workflow here. For example:
+
+All commits go through commit.sh using commit.msg. The format is standard git two-part:
+
+  Short summary under 50 characters
+
+  Body explaining what changed and why, wrapped at 72 characters.
+  Multiple paragraphs are fine. Lines starting with # are ignored.
+
+When a task is complete and ready to commit:
+1. Write commit.msg with a message appropriate to the changes.
+2. Tell the user to deploy any changed files, then run the commit script.
+
+---
+
+## Deploying Changes
+
+Describe your deployment process. For example:
+
+Claude cannot deploy directly. When files need to go to the server:
+1. Make the changes to the local project files.
+2. Give the exact scp or rsync command for the changed files.
+3. Give any commands that need to run on the server after deployment
+   (e.g. systemctl restart, docker compose up -d, etc.)
+
+Format it clearly so it can be copy-pasted without reading prose around it.
+
+---
+
+## Context Management
+
+If the conversation is getting long and compaction may be approaching:
+1. Stop the current task at a clean point.
+2. Update project_knowledge.md to reflect current state, what was just completed,
+   and what is next.
+3. Review project_instructions.md and recommend any updates if the session surfaced
+   new patterns, new gotchas, or changes to how we work. Do not edit it unilaterally --
+   flag the suggestions and let the user decide.
+4. Write a ready-to-paste prompt to open the next session with, containing enough context
+   to pick up without reading the whole conversation.
+5. Tell the user explicitly that we are near the context limit and to start a new chat
+   with that prompt.
+
+Triggers to watch for: conversation has been running a long time, responses feel sluggish,
+Claude.ai shows a compaction warning, or the user flags that the chat is getting long.
+
+Do not wait until compaction is forced. Stop early enough to do a clean handoff.
+
+---
+
+## Code and Script Standards
+
+Describe your standards here. For example:
+- Language-specific conventions (e.g. set -euo pipefail for bash)
+- Dependency policy (e.g. standard library preferred, no new deps without discussion)
+- Credential handling (e.g. always from config file or env vars, never hardcoded)
+- Idempotency expectations
+
+---
+
+## What To Avoid
+
+List hard decisions that have already been made and should not be revisited, and specific
+technical pitfalls that have already been debugged. This section saves the most time.
+
+Example format:
+- Do not use X approach for Y reason. Decision is final.
+- Z tool/method does not work in this environment. Use alternative instead.

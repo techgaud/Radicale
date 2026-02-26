@@ -1,0 +1,82 @@
+# Project Knowledge
+
+This document captures current project state. It is updated at the end of each session.
+Read this after project_instructions.md at the start of every chat.
+
+Last updated: YYYY-MM-DD
+
+---
+
+## Current State
+
+One paragraph describing the overall health of the project. What is running, what is
+stable, what is the primary concern right now.
+
+---
+
+## What Works
+
+A list of things that are confirmed working and do not need attention.
+
+---
+
+## What Is Broken / Unverified
+
+Describe each known issue clearly. For each one include:
+- What the symptom is
+- What the suspected cause is
+- What the first debugging step is
+
+---
+
+## Open Issues
+
+Numbered list of outstanding tasks in rough priority order. Keep descriptions short --
+just enough to know what the issue is and what done looks like.
+
+1. First priority issue
+2. Second priority issue
+3. ...
+
+---
+
+## Key File Locations
+
+On the server:
+  /path/to/project/root/
+  /path/to/important/config
+  /path/to/service/unit/files
+
+On dev machine:
+  /path/to/local/project/
+  project_instructions.md  -- how we work (gitignored)
+  project_knowledge.md     -- this file (gitignored)
+
+---
+
+## Recent Changes (this session)
+
+A short log of what changed in the most recent session. Replace this at the start of
+each new session with what happened in that session. Do not accumulate history here --
+that is what git log is for.
+
+---
+
+## Technical Gotchas
+
+The most valuable section. List every non-obvious thing that caused real debugging time.
+Format: what the problem is, what the fix is, one line each if possible.
+
+- Thing that bites you if you forget it: how to handle it correctly
+- Another gotcha: the correct approach
+
+---
+
+## Service / Component Quick Reference
+
+Commands you run repeatedly. Copy-pasteable.
+
+  check status of X:    <command>
+  restart X:            <command>
+  view X logs:          <command>
+  run Y manually:       <command>
