@@ -98,6 +98,8 @@ RADICALE_URL        = config["RADICALE_CALENDAR_URL"].rstrip("/") + "/"
 RADICALE_USER       = config["RADICALE_USER"]
 RADICALE_PASS       = config["RADICALE_PASS"]
 ICS_SYNC_LOG        = Path(config["ICS_SYNC_LOG"])
+if not ICS_SYNC_LOG.is_absolute():
+    ICS_SYNC_LOG = (SCRIPT_DIR / ICS_SYNC_LOG).resolve()
 
 # ─────────────────────────────────────────────────────────────────────────────
 # LOGGING

@@ -1,0 +1,6 @@
+[Unit]
+Description=Run ics-sync to process calendar emails
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /mnt/md0/docker/radicale/ics-sync.py
