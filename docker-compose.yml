@@ -23,6 +23,10 @@ services:
       - AGENDAV_TIMEZONE=America/New_York
       - AGENDAV_LANG=en
       - AGENDAV_LOG_DIR=/tmp/
+    entrypoint: ["/bin/bash", "/var/www/agendav/web/config/entrypoint.sh"]
+    volumes:
+      - ./agendav-config:/var/www/agendav/web/config
+      - ./agendav-db:/var/www/agendav/db
     restart: unless-stopped
     depends_on:
       - radicale

@@ -30,6 +30,9 @@ config/users
 # Your actual calendar and contact data
 data/
 
+# AgenDAV SQLite database (persistent volume, not tracked)
+agendav-db/
+
 # ─────────────────────────────────────────────────────────────────────────────
 # CLOUDFLARE TUNNEL CREDENTIALS
 # ─────────────────────────────────────────────────────────────────────────────
