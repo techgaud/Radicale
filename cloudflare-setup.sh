@@ -41,12 +41,19 @@ fi
 source "$CONFIG_FILE"
 
 required_vars=(CF_API_TOKEN CF_ZONE_ID CF_ACCOUNT_ID CF_EMAIL CF_GLOBAL_KEY \
-               DOMAIN INGEST_SUBDOMAIN INGEST_TOKEN CALENDAR_MAP)
+               DOMAIN SUBDOMAIN AGENDAV_SUBDOMAIN INGEST_SUBDOMAIN \
+               INGEST_TOKEN CALENDAR_MAP)
 for var in "${required_vars[@]}"; do
   if [[ -z "${!var:-}" ]]; then
     echo "ERROR: ${var} is not set in config.env"
-    echo "       If CF_EMAIL or CF_GLOBAL_KEY are empty this script has already"
-    echo "       been sealed. Re-run is safe but sealing cannot be undone from here."
+    if [[ "$var" == "CF_API_TOKEN" ]]; then
+      echo "       CF_API_TOKEN is created automatically by setup.sh."
+      echo "       Make sure setup.sh has been run successfully before running this script."
+    fi
+    if [[ "$var" == "CF_EMAIL" || "$var" == "CF_GLOBAL_KEY" ]]; then
+      echo "       If CF_EMAIL or CF_GLOBAL_KEY are empty, config.env has already been"
+      echo "       sealed by a previous run. They cannot be recovered from here."
+    fi
     exit 1
   fi
 done
@@ -325,6 +332,7 @@ ingest_http=$(docker exec ingest \
   || check "Ingest /health endpoint" "fail: got HTTP ${ingest_http}"
 
 # 8. DNS records exist for all 3 subdomains
+# Uses cf_bearer with DNS Read permission (included in CF_API_TOKEN)
 for sub in "${SUBDOMAIN}" "${AGENDAV_SUBDOMAIN}" "${INGEST_SUBDOMAIN}"; do
   fqdn="${sub}.${DOMAIN}"
   dns_result=$(cf_bearer GET "/zones/${CF_ZONE_ID}/dns_records?type=CNAME&name=${fqdn}" \

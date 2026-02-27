@@ -59,13 +59,6 @@ Collect these before running anything. Each is used during setup.
 ### Cloudflare Zone ID and Account ID
 `dash.cloudflare.com` → select your domain → right sidebar
 
-### Cloudflare API Token (Email Routing + Workers)
-`dash.cloudflare.com/profile/api-tokens` → Create Custom Token  
-Permissions needed:
-- Zone > Email Routing Rules > Edit
-- Zone > Zone > Read
-- Account > Workers Scripts > Edit
-
 ### Ingest Token
 A shared secret between the Email Worker and `ingest.py`.  
 Generate one now: `openssl rand -hex 32`
@@ -107,6 +100,7 @@ This will:
 - Add your domain to Cloudflare and retrieve the assigned nameservers
 - Pause and show you exactly which nameservers to enter in Namecheap
 - Poll until the zone becomes active (minutes to a few hours)
+- Create a permanent scoped `CF_API_TOKEN` and write it to `config.env`
 - Create a Cloudflare Tunnel
 - Create DNS records for all three subdomains (radicale, calendar, inbound)
 - Write all config files: `docker-compose.yml`, `cloudflared-config/config.yml`, `config/config`, `agendav-config/settings.php`

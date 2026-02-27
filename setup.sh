@@ -8,14 +8,15 @@ set -euo pipefail
 #   1.  Add domain to Cloudflare (create zone)
 #   2.  Get assigned nameservers and prompt Namecheap update
 #   3.  Poll until zone is active
-#   4.  Create short-lived API token for tunnel + DNS operations
-#   5.  Authenticate cloudflared and create tunnel
-#   6.  Create DNS records for radicale, agendav, and ingest subdomains
-#   7.  Write config files: config/config, cloudflared-config/config.yml,
+#   4.  Create permanent scoped CF_API_TOKEN and write to config.env
+#   5.  Create short-lived token for tunnel + DNS operations
+#   6.  Authenticate cloudflared and create tunnel
+#   7.  Create DNS records for radicale, agendav, and ingest subdomains
+#   8.  Write config files: config/config, cloudflared-config/config.yml,
 #       agendav-config/settings.php, docker-compose.yml
-#   8.  Create Radicale user with bcrypt password
-#   9.  Revoke the short-lived API token
-#   10. Start the Docker stack
+#   9.  Create Radicale user with bcrypt password
+#   10. Revoke the short-lived API token
+#   11. Start the Docker stack
 #
 # Idempotent: each step checks before acting. Safe to re-run after a failure.
 # Will not overwrite docker-compose.yml or cloudflared-config/config.yml if
@@ -68,14 +69,12 @@ RADICALE_FQDN="${SUBDOMAIN}.${DOMAIN}"
 AGENDAV_FQDN="${AGENDAV_SUBDOMAIN}.${DOMAIN}"
 INGEST_FQDN="${INGEST_SUBDOMAIN}.${DOMAIN}"
 
-# Token expiry — 1 hour from now
+# Short-lived token expiry — 1 hour from now
 EXPIRES=$(date -u -d "+1 hour" +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || \
           date -u -v+1H +"%Y-%m-%dT%H:%M:%SZ")
 
 # ─────────────────────────────────────────────────────────────────────────────
 # OVERWRITE PROTECTION
-# If docker-compose.yml exists and the stack is running, refuse to overwrite
-# generated files unless --force is passed.
 # ─────────────────────────────────────────────────────────────────────────────
 STACK_RUNNING=false
 if [[ -f "docker-compose.yml" ]] && docker compose ps --quiet 2>/dev/null | grep -q .; then
@@ -88,10 +87,7 @@ if [[ "$STACK_RUNNING" == "true" && "$FORCE" == "false" ]]; then
   echo "         Skipping file generation to avoid overwriting your live config."
   echo "         Pass --force to regenerate all files and restart the stack."
   echo ""
-  echo "         Safe to re-run setup.sh --force if you have changed config.env"
-  echo "         values and want to regenerate everything."
-  echo ""
-  echo "         Continuing with DNS and auth steps only..."
+  echo "         Continuing with token and DNS steps only..."
   SKIP_FILE_GEN=true
 else
   SKIP_FILE_GEN=false
@@ -132,9 +128,24 @@ cf_token() {
   fi
 }
 
+# Look up a permission group ID by exact name.
+# Prints the ID on success. Exits with a helpful error on failure.
+get_perm_id() {
+  local name="$1"
+  local perm_groups="$2"
+  local id
+  id=$(echo "$perm_groups" | jq -r --arg n "$name" \
+    '.result[] | select(.name == $n) | .id' | head -1)
+  if [[ -z "$id" ]]; then
+    echo "ERROR: Could not find permission group '${name}'." >&2
+    echo "       Available groups:" >&2
+    echo "$perm_groups" | jq -r '.result[].name' | sort | sed 's/^/         /' >&2
+    exit 1
+  fi
+  echo "$id"
+}
+
 ensure_cname() {
-  # Creates a proxied CNAME pointing at the tunnel if it doesn't already exist.
-  # Args: subdomain fqdn tunnel_id
   local sub="$1"
   local fqdn="$2"
   local tunnel_id="$3"
@@ -199,13 +210,12 @@ echo "==> Step 2: Retrieve Cloudflare nameservers..."
 ZONE_INFO=$(cf_global GET "/zones/${ZONE_ID}")
 NS1=$(echo "$ZONE_INFO" | jq -r '.result.name_servers[0]')
 NS2=$(echo "$ZONE_INFO" | jq -r '.result.name_servers[1]')
+ZONE_STATUS=$(echo "$ZONE_INFO" | jq -r '.result.status')
 
 if [[ -z "$NS1" || "$NS1" == "null" ]]; then
   echo "ERROR: Could not retrieve nameservers from Cloudflare."
   exit 1
 fi
-
-ZONE_STATUS=$(echo "$ZONE_INFO" | jq -r '.result.status')
 
 if [[ "$ZONE_STATUS" == "active" ]]; then
   echo "    Zone is already active, skipping nameserver prompt."
@@ -216,14 +226,10 @@ else
   echo "  MANUAL STEP REQUIRED: Update nameservers in Namecheap"
   echo ""
   echo "  1. Open: ${NC_URL}"
-  echo ""
-  echo "  2. Under 'Nameservers', select 'Custom DNS' from the dropdown"
-  echo ""
-  echo "  3. Enter these two nameservers exactly as shown:"
-  echo ""
+  echo "  2. Under 'Nameservers', select 'Custom DNS'"
+  echo "  3. Enter:"
   echo "       Nameserver 1:  ${NS1}"
   echo "       Nameserver 2:  ${NS2}"
-  echo ""
   echo "  4. Click the green checkmark to save"
   echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
   echo ""
@@ -263,21 +269,78 @@ else
 fi
 
 # ─────────────────────────────────────────────────────────────────────────────
-# STEP 4: CREATE SHORT-LIVED API TOKEN
+# STEP 4: CREATE PERMANENT SCOPED API TOKEN
+#
+# This token is written to config.env as CF_API_TOKEN and used by
+# cloudflare-setup.sh and provision-calendar.sh for all ongoing operations.
+# It has exactly the permissions those scripts need and no more.
+#
+# Skipped if CF_API_TOKEN is already set in config.env (idempotent).
 # ─────────────────────────────────────────────────────────────────────────────
 echo ""
-echo "==> Step 4: Create short-lived API token (expires in 1 hour)..."
+echo "==> Step 4: Create permanent scoped API token..."
 
-PERM_GROUPS=$(cf_global GET "/user/tokens/permission_groups")
-TUNNEL_PERM_ID=$(echo "$PERM_GROUPS" | jq -r '.result[] | select(.name == "Cloudflare Tunnel Write") | .id')
-DNS_PERM_ID=$(echo "$PERM_GROUPS" | jq -r '.result[] | select(.name == "DNS Write") | .id')
+if [[ -n "${CF_API_TOKEN:-}" ]]; then
+  echo "    CF_API_TOKEN already set in config.env, skipping."
+  echo "    (Remove CF_API_TOKEN from config.env and re-run to regenerate.)"
+else
+  PERM_GROUPS=$(cf_global GET "/user/tokens/permission_groups")
 
-if [[ -z "$TUNNEL_PERM_ID" || -z "$DNS_PERM_ID" ]]; then
-  echo "ERROR: Could not retrieve permission group IDs."
-  exit 1
+  # Look up each required permission group ID by name
+  EMAIL_ROUTING_PERM_ID=$(get_perm_id "Email Routing Rules Write" "$PERM_GROUPS")
+  ZONE_READ_PERM_ID=$(get_perm_id "Zone Read"                     "$PERM_GROUPS")
+  DNS_READ_PERM_ID=$(get_perm_id "DNS Read"                       "$PERM_GROUPS")
+  WORKERS_PERM_ID=$(get_perm_id "Workers Scripts Write"           "$PERM_GROUPS")
+
+  PERM_TOKEN_RESPONSE=$(cf_global POST "/user/tokens" "{
+    \"name\": \"radicale-${DOMAIN}\",
+    \"policies\": [{
+      \"effect\": \"allow\",
+      \"resources\": {
+        \"com.cloudflare.api.account.${CF_ACCOUNT_ID}\": \"*\",
+        \"com.cloudflare.api.account.zone.${ZONE_ID}\": \"*\"
+      },
+      \"permission_groups\": [
+        {\"id\": \"${EMAIL_ROUTING_PERM_ID}\"},
+        {\"id\": \"${ZONE_READ_PERM_ID}\"},
+        {\"id\": \"${DNS_READ_PERM_ID}\"},
+        {\"id\": \"${WORKERS_PERM_ID}\"}
+      ]
+    }]
+  }")
+
+  CF_API_TOKEN=$(echo "$PERM_TOKEN_RESPONSE" | jq -r '.result.value')
+  PERM_TOKEN_ID=$(echo "$PERM_TOKEN_RESPONSE" | jq -r '.result.id')
+
+  if [[ "$CF_API_TOKEN" == "null" || -z "$CF_API_TOKEN" ]]; then
+    echo "ERROR: Failed to create permanent API token."
+    echo "$PERM_TOKEN_RESPONSE" | jq '.errors'
+    exit 1
+  fi
+
+  # Write CF_API_TOKEN back to config.env
+  sed -i "s|^CF_API_TOKEN=.*|CF_API_TOKEN=\"${CF_API_TOKEN}\"|" "$CONFIG_FILE"
+  export CF_API_TOKEN
+
+  echo "    Permanent token created (ID: ${PERM_TOKEN_ID})"
+  echo "    CF_API_TOKEN written to ${CONFIG_FILE}"
 fi
 
-TOKEN_RESPONSE=$(cf_global POST "/user/tokens" "{
+# ─────────────────────────────────────────────────────────────────────────────
+# STEP 5: CREATE SHORT-LIVED TOKEN FOR TUNNEL + DNS
+#
+# Separate from the permanent token — this one has Tunnel Write and DNS Write
+# which are only needed during initial setup. It expires in 1 hour and is
+# revoked explicitly in Step 10.
+# ─────────────────────────────────────────────────────────────────────────────
+echo ""
+echo "==> Step 5: Create short-lived token for tunnel + DNS (expires 1 hour)..."
+
+PERM_GROUPS=$(cf_global GET "/user/tokens/permission_groups")
+TUNNEL_PERM_ID=$(get_perm_id "Cloudflare Tunnel Write" "$PERM_GROUPS")
+DNS_WRITE_PERM_ID=$(get_perm_id "DNS Write"            "$PERM_GROUPS")
+
+SHORT_TOKEN_RESPONSE=$(cf_global POST "/user/tokens" "{
   \"name\": \"radicale-setup-$(date +%s)\",
   \"policies\": [{
     \"effect\": \"allow\",
@@ -287,28 +350,28 @@ TOKEN_RESPONSE=$(cf_global POST "/user/tokens" "{
     },
     \"permission_groups\": [
       {\"id\": \"${TUNNEL_PERM_ID}\"},
-      {\"id\": \"${DNS_PERM_ID}\"}
+      {\"id\": \"${DNS_WRITE_PERM_ID}\"}
     ]
   }],
   \"expires_on\": \"${EXPIRES}\"
 }")
 
-API_TOKEN=$(echo "$TOKEN_RESPONSE" | jq -r '.result.value')
-API_TOKEN_ID=$(echo "$TOKEN_RESPONSE" | jq -r '.result.id')
+API_TOKEN=$(echo "$SHORT_TOKEN_RESPONSE" | jq -r '.result.value')
+API_TOKEN_ID=$(echo "$SHORT_TOKEN_RESPONSE" | jq -r '.result.id')
 
 if [[ "$API_TOKEN" == "null" || -z "$API_TOKEN" ]]; then
-  echo "ERROR: Failed to create API token."
-  echo "$TOKEN_RESPONSE" | jq '.errors'
+  echo "ERROR: Failed to create short-lived token."
+  echo "$SHORT_TOKEN_RESPONSE" | jq '.errors'
   exit 1
 fi
 export CLOUDFLARE_API_TOKEN="${API_TOKEN}"
 echo "    Token created (ID: ${API_TOKEN_ID})"
 
 # ─────────────────────────────────────────────────────────────────────────────
-# STEP 5: CREATE CLOUDFLARE TUNNEL
+# STEP 6: CREATE CLOUDFLARE TUNNEL
 # ─────────────────────────────────────────────────────────────────────────────
 echo ""
-echo "==> Step 5: Create Cloudflare Tunnel..."
+echo "==> Step 6: Create Cloudflare Tunnel..."
 
 if [[ -f ~/.cloudflared/cert.pem ]]; then
   echo "    cert.pem already exists, skipping login."
@@ -334,27 +397,26 @@ else
 fi
 
 # ─────────────────────────────────────────────────────────────────────────────
-# STEP 6: CREATE DNS RECORDS
+# STEP 7: CREATE DNS RECORDS
 # ─────────────────────────────────────────────────────────────────────────────
 echo ""
-echo "==> Step 6: Create DNS CNAME records..."
+echo "==> Step 7: Create DNS CNAME records..."
 
 ensure_cname "$SUBDOMAIN"         "$RADICALE_FQDN" "$TUNNEL_ID"
 ensure_cname "$AGENDAV_SUBDOMAIN" "$AGENDAV_FQDN"  "$TUNNEL_ID"
 ensure_cname "$INGEST_SUBDOMAIN"  "$INGEST_FQDN"   "$TUNNEL_ID"
 
 # ─────────────────────────────────────────────────────────────────────────────
-# STEP 7: WRITE CONFIG FILES
+# STEP 8: WRITE CONFIG FILES
 # ─────────────────────────────────────────────────────────────────────────────
 echo ""
-echo "==> Step 7: Write config files..."
+echo "==> Step 8: Write config files..."
 
 if [[ "$SKIP_FILE_GEN" == "true" ]]; then
   echo "    Skipped (stack is running — use --force to regenerate)."
 else
   mkdir -p config data cloudflared-config/creds agendav-db
 
-  # ── Radicale server config ──────────────────────────────────────────────────
   cat > config/config <<EOF
 [server]
 hosts = 0.0.0.0:5232
@@ -369,8 +431,6 @@ filesystem_folder = /data/collections
 EOF
   echo "    Written: config/config"
 
-  # ── Cloudflare Tunnel ingress config ───────────────────────────────────────
-  # Copy tunnel credentials if not already present
   if [[ ! -f "cloudflared-config/creds/${TUNNEL_ID}.json" ]]; then
     cp ~/.cloudflared/${TUNNEL_ID}.json cloudflared-config/creds/
     chmod 644 "cloudflared-config/creds/${TUNNEL_ID}.json"
@@ -391,7 +451,6 @@ ingress:
 EOF
   echo "    Written: cloudflared-config/config.yml"
 
-  # ── AgenDAV settings.php (generated from settings.php.example) ─────────────
   if [[ ! -f "agendav-config/settings.php.example" ]]; then
     echo "ERROR: agendav-config/settings.php.example not found."
     exit 1
@@ -403,7 +462,6 @@ EOF
     agendav-config/settings.php.example > agendav-config/settings.php
   echo "    Written: agendav-config/settings.php"
 
-  # ── docker-compose.yml ─────────────────────────────────────────────────────
   cat > docker-compose.yml <<EOF
 services:
   radicale:
@@ -468,10 +526,10 @@ EOF
 fi
 
 # ─────────────────────────────────────────────────────────────────────────────
-# STEP 8: CREATE RADICALE USER
+# STEP 9: CREATE RADICALE USER
 # ─────────────────────────────────────────────────────────────────────────────
 echo ""
-echo "==> Step 8: Create Radicale user..."
+echo "==> Step 9: Create Radicale user..."
 
 if [[ -f "config/users" && "$FORCE" == "false" ]]; then
   echo "    config/users already exists, skipping."
@@ -485,10 +543,10 @@ else
 fi
 
 # ─────────────────────────────────────────────────────────────────────────────
-# STEP 9: REVOKE SHORT-LIVED TOKEN
+# STEP 10: REVOKE SHORT-LIVED TOKEN
 # ─────────────────────────────────────────────────────────────────────────────
 echo ""
-echo "==> Step 9: Revoke short-lived API token..."
+echo "==> Step 10: Revoke short-lived token..."
 
 REVOKE_RESULT=$(cf_global DELETE "/user/tokens/${API_TOKEN_ID}" | jq -r '.success')
 if [[ "$REVOKE_RESULT" == "true" ]]; then
@@ -497,13 +555,13 @@ else
   echo "WARNING: Token revocation may have failed."
   echo "         Revoke it manually at: https://dash.cloudflare.com/profile/api-tokens"
 fi
-unset CLOUDFLARE_API_TOKEN
+unset CLOUDFLARE_API_TOKEN API_TOKEN
 
 # ─────────────────────────────────────────────────────────────────────────────
-# STEP 10: START DOCKER STACK
+# STEP 11: START DOCKER STACK
 # ─────────────────────────────────────────────────────────────────────────────
 echo ""
-echo "==> Step 10: Start Docker stack..."
+echo "==> Step 11: Start Docker stack..."
 
 if [[ "$FORCE" == "true" ]]; then
   docker compose up -d --force-recreate
