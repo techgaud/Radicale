@@ -1,26 +1,32 @@
 <?php
 // ─────────────────────────────────────────────────────────────────────────────
-// AgenDAV settings - mounted into the container at
-// /var/www/agendav/web/config/settings.php
+// agendav-config/settings.php.example
 //
-// Values are hardcoded (not getenv) because run.sh does literal sed
-// substitution on this file using the env var names as tokens, which
-// corrupts any PHP that contains those strings.
+// This is the template. setup.sh generates the real settings.php from this
+// file, substituting values from config.env. Do not edit settings.php
+// directly — it is gitignored and will be overwritten on re-runs of setup.sh.
+//
+// To change UI defaults (timezone, date format, etc.), edit this file and
+// re-run setup.sh.
+//
+// Values are hardcoded rather than using getenv() because AgenDAV's run.sh
+// does literal sed substitution on settings.php using env var names as
+// tokens, which corrupts any PHP that contains those strings.
 // ─────────────────────────────────────────────────────────────────────────────
 
 // Site
 $app['site.title'] = 'Calendar';
-$app['site.footer'] = 'natecalvert.org';
+$app['site.footer'] = '%%DOMAIN%%';
 
-// CalDAV server (internal Docker network)
+// CalDAV server (internal Docker network — do not change)
 $app['caldav.baseurl'] = 'http://radicale:5232';
-$app['caldav.baseurl.public'] = 'https://radicale.natecalvert.org';
+$app['caldav.baseurl.public'] = 'https://%%RADICALE_SUBDOMAIN%%.%%DOMAIN%%';
 $app['caldav.authmethod'] = 'basic';
 
-// Trusted proxies (cloudflared)
+// Trusted proxies (cloudflared address ranges — do not change)
 $app['proxies'] = ['172.16.0.0/12', '192.168.0.0/16', '10.0.0.0/8'];
 
-// Database (stateless SQLite, ephemeral)
+// Database — path inside the container (do not change)
 $app['db.options'] = [
     'path' => '/var/www/agendav/db/agendav.sqlite',
     'driver' => 'pdo_sqlite',
@@ -31,16 +37,16 @@ $app['log.path'] = '/tmp/';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // DEFAULT PREFERENCES
-// These are applied to all users. Since preference saving is broken on this
-// image (Doctrine/PHP version mismatch), these are the only way to configure
-// the UI.
+// These are applied to all users. The preference save feature is broken in
+// this image (Doctrine ORM / PHP 8.2 incompatibility), so these hardcoded
+// defaults are the only way to configure the UI.
 // ─────────────────────────────────────────────────────────────────────────────
 
 // Language
 $app['defaults.language'] = 'en';
 
-// Timezone
-$app['defaults.timezone'] = 'America/New_York';
+// Timezone — set from TIMEZONE in config.env
+$app['defaults.timezone'] = '%%TIMEZONE%%';
 
 // Date format: ymd, dmy, mdy
 $app['defaults.date_format'] = 'mdy';
@@ -63,7 +69,7 @@ $app['defaults.default_view'] = 'month';
 // List view days
 $app['defaults.list_days'] = 14;
 
-// Calendar sharing (disabled, single user)
+// Calendar sharing (disabled — single user setup)
 $app['calendar.sharing'] = false;
 
 // Logout redirection

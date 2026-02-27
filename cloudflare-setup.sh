@@ -117,39 +117,43 @@ echo "    OK"
 # STEP 1: ENABLE EMAIL ROUTING
 # ─────────────────────────────────────────────────────────────────────────────
 echo ""
-echo "==> Step 1: Email Routing (skipped - enabled manually in dashboard)"
+echo "==> Step 1: Enable Email Routing on zone ${CF_ZONE_ID}..."
+
+# Attempt to enable via API. If it fails (the enable endpoint requires a
+# permission not available in custom tokens), print a clear manual instruction
+# and continue — the rest of the script does not depend on this call succeeding.
+enable_response=$(cf_bearer POST "/zones/${CF_ZONE_ID}/email/routing/enable" '{}' 2>/dev/null || true)
+enabled=$(echo "${enable_response}" | jq -r '.result.enabled // false' 2>/dev/null || echo 'false')
+
+if [[ "$enabled" == "true" ]]; then
+  echo "    Email Routing enabled via API."
+else
+  # Check if it was already enabled before we tried
+  status_response=$(cf_bearer GET "/zones/${CF_ZONE_ID}/email/routing" 2>/dev/null || true)
+  already=$(echo "${status_response}" | jq -r '.result.enabled // false' 2>/dev/null || echo 'false')
+  if [[ "$already" == "true" ]]; then
+    echo "    Email Routing already enabled."
+  else
+    echo ""
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "  MANUAL STEP REQUIRED: Enable Email Routing in the dashboard"
+    echo ""
+    echo "  The API cannot enable Email Routing programmatically."
+    echo "  Go to: dash.cloudflare.com -> ${DOMAIN} -> Email -> Email Routing"
+    echo "  Click 'Enable Email Routing' and complete the wizard."
+    echo "  (You can use a throwaway forwarding rule during the wizard"
+    echo "   — it will be replaced by the Worker rules this script creates.)"
+    echo ""
+    read -rp "  Press Enter once Email Routing is enabled in the dashboard..."
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  fi
+fi
 
 # ─────────────────────────────────────────────────────────────────────────────
-# STEP 2: CREATE DNS CNAME FOR inbound.DOMAIN
+# STEP 2: DNS
 # ─────────────────────────────────────────────────────────────────────────────
 echo ""
-echo "==> Step 2: Create DNS record for inbound.${DOMAIN}..."
-
-# Get tunnel ID from local cloudflared config
-TUNNEL_ID=$(grep '^tunnel:' "${SCRIPT_DIR}/cloudflared-config/config.yml" 2>/dev/null \
-  | awk '{print $2}' || true)
-if [[ -z "$TUNNEL_ID" ]]; then
-  echo "ERROR: Could not read tunnel ID from cloudflared-config/config.yml"
-  exit 1
-fi
-TUNNEL_TARGET="${TUNNEL_ID}.cfargotunnel.com"
-
-existing_dns=$(cf_global GET "/zones/${CF_ZONE_ID}/dns_records?type=CNAME&name=inbound.${DOMAIN}" \
-  | jq -r '.result[0].id // empty')
-
-if [[ -n "$existing_dns" ]]; then
-  echo "    CNAME for inbound.${DOMAIN} already exists (${existing_dns})."
-else
-  dns_response=$(cf_global POST "/zones/${CF_ZONE_ID}/dns_records" "{
-    \"type\": \"CNAME\",
-    \"name\": \"inbound\",
-    \"content\": \"${TUNNEL_TARGET}\",
-    \"ttl\": 60,
-    \"proxied\": true
-  }")
-  check_success "$dns_response" "Create DNS record"
-  echo "    CNAME created: inbound.${DOMAIN} -> ${TUNNEL_TARGET}"
-fi
+echo "==> Step 2: DNS (handled by setup.sh - skipping)."
 
 # ─────────────────────────────────────────────────────────────────────────────
 # STEP 3: DEPLOY EMAIL WORKER
