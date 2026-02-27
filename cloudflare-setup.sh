@@ -5,24 +5,23 @@ set -euo pipefail
 # cloudflare-setup.sh
 #
 # One-time setup for Cloudflare Email Routing + Email Worker.
-# Run this once before provision-calendar.sh or any end-to-end testing.
+# Run this after setup.sh and after enabling Email Routing in the dashboard.
 #
 # What it does:
-#   1. Enables Email Routing on the zone (if not already enabled)
-#   2. Creates the inbound.natecalvert.org DNS CNAME for the tunnel
-#   3. Deploys the Email Worker via Wrangler
-#   4. Sets Worker secrets (INGEST_URL, INGEST_TOKEN) via Wrangler
-#   5. Creates Email Routing rules for the three initial addresses
+#   1. Attempts to enable Email Routing via API (falls back to manual prompt)
+#   2. DNS records are skipped (setup.sh handles all DNS)
+#   3. Deploys the Email Worker via Cloudflare API (no Wrangler required)
+#   4. Sets Worker secrets: INGEST_URL, INGEST_TOKEN
+#   5. Creates Email Routing rules for all addresses in CALENDAR_MAP
 #
 # Prerequisites:
-#   - Node.js and npm installed (for Wrangler)
-#   - Wrangler installed: npm install -g wrangler
+#   - setup.sh has been run successfully
 #   - config.env populated with:
 #       CF_API_TOKEN, CF_ZONE_ID, CF_ACCOUNT_ID, CF_EMAIL, CF_GLOBAL_KEY,
-#       DOMAIN, INGEST_TOKEN, RADICALE_USER, RADICALE_PASS, TUNNEL_NAME
-#   - worker/email-worker.js and worker/wrangler.toml present
+#       DOMAIN, INGEST_SUBDOMAIN, INGEST_TOKEN, CALENDAR_MAP
+#   - worker/email-worker.js present
 #
-# Idempotent: safe to re-run. Existing rules and secrets are skipped or updated.
+# Idempotent: safe to re-run. Existing rules and secrets are overwritten.
 # ─────────────────────────────────────────────────────────────────────────────
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -39,7 +38,7 @@ fi
 source "$CONFIG_FILE"
 
 required_vars=(CF_API_TOKEN CF_ZONE_ID CF_ACCOUNT_ID CF_EMAIL CF_GLOBAL_KEY \
-               DOMAIN INGEST_TOKEN RADICALE_USER RADICALE_PASS TUNNEL_NAME)
+               DOMAIN INGEST_SUBDOMAIN INGEST_TOKEN CALENDAR_MAP)
 for var in "${required_vars[@]}"; do
   if [[ -z "${!var:-}" ]]; then
     echo "ERROR: ${var} is not set in config.env"
@@ -47,7 +46,7 @@ for var in "${required_vars[@]}"; do
   fi
 done
 
-INGEST_URL="https://inbound.${DOMAIN}/ingest"
+INGEST_URL="https://${INGEST_SUBDOMAIN}.${DOMAIN}/ingest"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # HELPERS
