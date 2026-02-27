@@ -59,12 +59,8 @@ Collect these before running anything. Each is used during setup.
 ### Cloudflare Zone ID and Account ID
 `dash.cloudflare.com` → select your domain → right sidebar
 
-### Ingest Token
-A shared secret between the Email Worker and `ingest.py`.  
-Generate one now: `openssl rand -hex 32`
-
-### GitHub Tokens
-Two tokens — see the comments in `config.env.example` for exact steps.
+### GitHub Token
+One classic PAT with `repo` scope — see the comments in `config.env.example` for exact steps. `github-setup.sh` generates an SSH deploy key and clears this token automatically when done.
 
 ---
 

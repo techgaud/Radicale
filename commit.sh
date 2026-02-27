@@ -92,34 +92,11 @@ git commit --file="$MSG_FILE" --cleanup=strip
 
 # ─────────────────────────────────────────────────────────────────────────────
 # STEP 7 — Push to remote
-# Load the commit token from config.env, embed it in the remote URL for the
-# push, then strip it immediately after so it is never left in .git/config.
+# Authentication is handled by the SSH deploy key configured in ~/.ssh/config
+# by github-setup.sh. No token handling required here.
 # ─────────────────────────────────────────────────────────────────────────────
-CONFIG_FILE="${SCRIPT_DIR}/config.env"
-if [[ ! -f "$CONFIG_FILE" ]]; then
-  echo "ERROR: config.env not found at ${CONFIG_FILE}"
-  exit 1
-fi
-
-# Extract GITHUB_COMMIT_TOKEN and repo details from config.env
-GITHUB_COMMIT_TOKEN=$(grep '^GITHUB_COMMIT_TOKEN=' "$CONFIG_FILE" | \
-  sed 's/^GITHUB_COMMIT_TOKEN=//;s/^"//;s/"$//')
-GITHUB_USERNAME=$(grep '^GITHUB_USERNAME=' "$CONFIG_FILE" | \
-  sed 's/^GITHUB_USERNAME=//;s/^"//;s/"$//')
-GITHUB_REPO=$(grep '^GITHUB_REPO=' "$CONFIG_FILE" | \
-  sed 's/^GITHUB_REPO=//;s/^"//;s/"$//')
-
-if [[ -z "$GITHUB_COMMIT_TOKEN" ]]; then
-  echo "ERROR: GITHUB_COMMIT_TOKEN is not set in config.env"
-  exit 1
-fi
-
 echo "==> Pushing to remote..."
-# Temporarily embed token in remote URL
-git remote set-url origin "https://${GITHUB_COMMIT_TOKEN}@github.com/${GITHUB_USERNAME}/${GITHUB_REPO}.git"
 git push
-# Strip token from remote URL immediately after push
-git remote set-url origin "https://github.com/${GITHUB_USERNAME}/${GITHUB_REPO}.git"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # STEP 8 — Clear commit.msg

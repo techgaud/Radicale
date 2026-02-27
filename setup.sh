@@ -54,7 +54,7 @@ required_vars=(
   DOMAIN SUBDOMAIN AGENDAV_SUBDOMAIN INGEST_SUBDOMAIN TUNNEL_NAME
   RADICALE_USER RADICALE_PASS
   TIMEZONE
-  INGEST_TOKEN RADICALE_INTERNAL_URL INGEST_PORT
+  RADICALE_INTERNAL_URL INGEST_PORT
 )
 missing=0
 for var in "${required_vars[@]}"; do
@@ -64,6 +64,14 @@ for var in "${required_vars[@]}"; do
   fi
 done
 [[ $missing -eq 1 ]] && exit 1
+
+# Auto-generate INGEST_TOKEN if not already set
+if [[ -z "${INGEST_TOKEN:-}" ]]; then
+  INGEST_TOKEN=$(openssl rand -hex 32)
+  sed -i "s|^INGEST_TOKEN=.*|INGEST_TOKEN=\"${INGEST_TOKEN}\"|" "$CONFIG_FILE"
+  export INGEST_TOKEN
+  echo "    INGEST_TOKEN generated and written to ${CONFIG_FILE}"
+fi
 
 RADICALE_FQDN="${SUBDOMAIN}.${DOMAIN}"
 AGENDAV_FQDN="${AGENDAV_SUBDOMAIN}.${DOMAIN}"
