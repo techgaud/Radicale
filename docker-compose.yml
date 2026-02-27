@@ -31,6 +31,20 @@ services:
     depends_on:
       - radicale
 
+  ingest:
+    image: python:3.11-slim
+    container_name: ingest
+    expose:
+      - "8000"
+    working_dir: /app
+    command: python3 ingest.py
+    volumes:
+      - ./ingest.py:/app/ingest.py:ro
+      - ./config.env:/app/config.env:ro
+    restart: unless-stopped
+    depends_on:
+      - radicale
+
   cloudflared:
     image: cloudflare/cloudflared:latest
     container_name: cloudflared
@@ -41,3 +55,4 @@ services:
     depends_on:
       - radicale
       - agendav
+      - ingest

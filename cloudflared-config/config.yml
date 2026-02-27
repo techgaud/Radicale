@@ -6,4 +6,6 @@ ingress:
     service: http://radicale:5232
   - hostname: calendar.natecalvert.org
     service: http://agendav:8080
+  - hostname: inbound.natecalvert.org
+    service: http://ingest:8000
   - service: http_status:404

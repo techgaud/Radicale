@@ -1,0 +1,19 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# wrangler.toml
+#
+# Cloudflare Worker configuration for the email ingest worker.
+# Deploy with: wrangler deploy
+#
+# Secrets are NOT stored here. Set them with:
+#   wrangler secret put INGEST_URL
+#   wrangler secret put INGEST_TOKEN
+# ─────────────────────────────────────────────────────────────────────────────
+
+name = "email-ingest"
+main = "email-worker.js"
+compatibility_date = "2024-01-01"
+
+# Email handler — no HTTP routes needed
+[triggers]
+# Routes are configured in Cloudflare Email Routing dashboard, not here.
+# This just declares the Worker handles email events.
