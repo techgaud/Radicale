@@ -25,8 +25,7 @@ else
   echo "    jq: OK ($(jq --version))"
 fi
 
-# ─── NETCAT ─────────────────────────────────────────────────────────────────
-# Used by bridge-setup.sh to poll the IMAP port until Bridge is ready
+# ─── NETCAT ──────────────────────────────────────────────────────────────────
 if ! command -v nc &>/dev/null; then
   echo "    Installing netcat..."
   sudo apt-get install -y netcat-openbsd
@@ -37,8 +36,6 @@ fi
 # ─── DOCKER ──────────────────────────────────────────────────────────────────
 if ! command -v docker &>/dev/null; then
   echo "    Installing Docker..."
-  # Remove any stale or malformed Docker apt repo files left by previous
-  # install attempts before running the official installer.
   sudo rm -f /etc/apt/sources.list.d/docker.list
   sudo rm -f /usr/share/keyrings/docker-archive-keyring.gpg
   curl -fsSL https://get.docker.com | sh
@@ -51,11 +48,8 @@ else
 fi
 
 # ─── DOCKER COMPOSE ──────────────────────────────────────────────────────────
-# Install directly from GitHub releases to guarantee the correct architecture
-# binary. The apt package can install the wrong arch on some Ubuntu setups.
 if ! docker compose version &>/dev/null; then
   echo "    Installing Docker Compose plugin..."
-  # Remove any broken existing binary first
   rm -f ~/.docker/cli-plugins/docker-compose
   sudo rm -f /usr/local/lib/docker/cli-plugins/docker-compose
   COMPOSE_VERSION=$(curl -sf https://api.github.com/repos/docker/compose/releases/latest | \
@@ -69,118 +63,16 @@ else
   echo "    Docker Compose: OK ($(docker compose version))"
 fi
 
-# ─── GPG ────────────────────────────────────────────────────────────────────
-if ! command -v gpg &>/dev/null; then
-  echo "    Installing gpg..."
-  sudo apt-get install -y gnupg
-else
-  echo "    gpg: OK ($(gpg --version | head -n1))"
-fi
-
-# ─── PASS ────────────────────────────────────────────────────────────────────
-# pass is the password manager used by Proton Bridge on Linux to store
-# credentials. It requires GPG to be installed first.
-if ! command -v pass &>/dev/null; then
-  echo "    Installing pass..."
-  sudo apt-get install -y pass
-else
-  echo "    pass: OK ($(pass version))"
-fi
-
-# ─── PYTHON3 AND IMAPCLIENT ──────────────────────────────────────────────────
-# Required by ics-sync.sh to connect to Bridge's local IMAP and process
-# email attachments.
+# ─── PYTHON3 ─────────────────────────────────────────────────────────────────
+# Required by ingest.py. Uses stdlib only — no pip packages needed.
 if ! command -v python3 &>/dev/null; then
   echo "    Installing python3..."
-  sudo apt-get install -y python3 python3-pip
+  sudo apt-get install -y python3
 else
   echo "    python3: OK ($(python3 --version))"
 fi
 
-if ! python3 -c "import imapclient" &>/dev/null; then
-  echo "    Installing imapclient..."
-  pip3 install imapclient --break-system-packages 2>/dev/null || \
-    pip3 install imapclient 2>/dev/null || \
-    sudo apt-get install -y python3-imapclient
-else
-  echo "    imapclient: OK"
-fi
-
-if ! python3 -c "import icalendar" &>/dev/null; then
-  echo "    Installing icalendar..."
-  pip3 install icalendar --break-system-packages 2>/dev/null || \
-    pip3 install icalendar 2>/dev/null || \
-    sudo apt-get install -y python3-icalendar
-else
-  echo "    icalendar: OK"
-fi
-
-# ─── GO ────────────────────────────────────────────────────────────────────
-# Required to build goimapnotify from source. goimapnotify is hosted on
-# GitLab and does not publish pre-built binaries, so we build it via
-# go install.
-if ! command -v go &>/dev/null; then
-  echo "    Installing Go..."
-  GO_VERSION=$(curl -sf https://go.dev/dl/?mode=json | jq -r '.[0].version')
-  curl -fsSL "https://dl.google.com/go/${GO_VERSION}.linux-amd64.tar.gz" \
-    -o /tmp/go.tar.gz
-  sudo rm -rf /usr/local/go
-  sudo tar -C /usr/local -xzf /tmp/go.tar.gz
-  rm /tmp/go.tar.gz
-  # Add Go to PATH for the rest of this script
-  export PATH="$PATH:/usr/local/go/bin"
-  # Persist it for future sessions
-  if ! grep -q '/usr/local/go/bin' ~/.profile; then
-    echo 'export PATH=$PATH:/usr/local/go/bin' >> ~/.profile
-    echo 'export PATH=$PATH:$(go env GOPATH)/bin' >> ~/.profile
-  fi
-  echo "    Go installed: $(go version)"
-else
-  echo "    Go: OK ($(go version))"
-fi
-
-# Ensure GOPATH bin is in PATH for this session
-export PATH="$PATH:$(go env GOPATH)/bin"
-
-# ─── GOIMAPNOTIFY ────────────────────────────────────────────────────────────
-# Holds an IMAP IDLE connection open against Bridge and fires ics-sync.py
-# the moment new mail arrives in the watched folder.
-# Source: https://gitlab.com/shackra/goimapnotify
-#
-# goimapnotify has no binary releases and 'go install' does not work because
-# the module has no semver tags and the main package is under ./cmd/.
-# The correct approach is to clone and build from source.
-if ! command -v goimapnotify &>/dev/null; then
-  echo "    Installing goimapnotify from source..."
-  rm -rf /tmp/goimapnotify
-  git clone https://gitlab.com/shackra/goimapnotify.git /tmp/goimapnotify
-  cd /tmp/goimapnotify
-  go build -o goimapnotify ./cmd/...
-  sudo mv goimapnotify /usr/local/bin/goimapnotify
-  cd - > /dev/null
-  rm -rf /tmp/goimapnotify
-  echo "    goimapnotify installed: $(goimapnotify -h 2>&1 | head -n1 || echo OK)"
-else
-  echo "    goimapnotify: OK"
-fi
-
-# ─── PROTON BRIDGE ───────────────────────────────────────────────────────────
-# Bridge exposes a local IMAP/SMTP interface that decrypts Proton Mail on
-# the fly. Requires a paid Proton plan.
-if ! command -v protonmail-bridge &>/dev/null; then
-  echo "    Installing Proton Bridge..."
-  BRIDGE_VERSION=$(curl -sf https://api.github.com/repos/ProtonMail/proton-bridge/releases/latest | \
-    jq -r '.tag_name' | sed 's/^v//')
-  curl -fsSL "https://proton.me/download/bridge/protonmail-bridge_${BRIDGE_VERSION}-1_amd64.deb" \
-    -o /tmp/proton-bridge.deb
-  sudo dpkg -i /tmp/proton-bridge.deb || true
-  sudo apt-get install -f -y
-  rm -f /tmp/proton-bridge.deb
-else
-  echo "    Proton Bridge: OK ($(protonmail-bridge --version 2>/dev/null || echo installed))"
-fi
-
-# ─── GIT ────────────────────────────────────────────────────────────────────
+# ─── GIT ─────────────────────────────────────────────────────────────────────
 if ! command -v git &>/dev/null; then
   echo "    Installing git..."
   sudo apt-get install -y git
@@ -205,7 +97,7 @@ fi
 echo ""
 echo "==> All dependencies satisfied."
 
-# ─── DOCKER GROUP WARNING ─────────────────────────────────────────────────────
+# ─── DOCKER GROUP WARNING ────────────────────────────────────────────────────
 if ! groups "$USER" | grep -q docker; then
   echo ""
   echo "WARNING: Your user is not yet in the docker group."

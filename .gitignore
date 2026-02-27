@@ -17,6 +17,13 @@ project_knowledge.md
 !project_instructions.md.example
 !project_knowledge.md.example
 
+# ─────────────────────────────────────────────────────────────────────────────
+# WRANGLER CACHE
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Wrangler local cache — contains account metadata, never commit
+worker/.wrangler/
+
 # Log files
 logs/*.log
 

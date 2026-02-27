@@ -1,21 +1,40 @@
 # radicale-selfhost
 
-A set of scripts to deploy a self-hosted Radicale CalDAV/CardDAV server, accessible via a public subdomain, without exposing any ports on your router. Uses Cloudflare Tunnel to handle ingress, so your home IP address is never exposed and dynamic IP is not a concern.
+A set of scripts to deploy a self-hosted CalDAV server (Radicale) with automatic email-to-calendar ingestion, accessible via a public subdomain without exposing any ports on your router.
 
 ---
 
 ## What This Does
 
-- Deploys Radicale in Docker for calendar and contact sync
-- Creates a Cloudflare Tunnel so the server is reachable at a public subdomain
-- Automates DNS configuration at both Cloudflare and Namecheap
+- Deploys Radicale in Docker for calendar sync
+- Deploys AgenDAV in Docker as a web calendar interface
+- Creates a Cloudflare Tunnel so the server is reachable at a public subdomain — no port forwarding, no exposed home IP
+- Automates DNS configuration via the Cloudflare API
+- Receives calendar invites via email and automatically pushes them into Radicale using a Cloudflare Email Worker pipeline
 - Publishes the project to a new GitHub repository
 
 ---
 
 ## How It Works
 
-Cloudflare Tunnel runs as a sidecar container alongside Radicale. It establishes an outbound connection to Cloudflare's edge network, which maps your chosen subdomain to that tunnel. No inbound firewall rules or port forwarding are required. Your server's IP address is never exposed.
+### Tunnel
+
+Cloudflare Tunnel runs as a sidecar container alongside Radicale and AgenDAV. It establishes an outbound connection to Cloudflare's edge network, which maps your chosen subdomains to those services. No inbound firewall rules or port forwarding are required.
+
+### Email Ingest Pipeline
+
+```
+Your email provider
+  → auto-forward rules (one per calendar address)
+    → calendar-specific addresses on your domain
+      → Cloudflare Email Routing
+        → Email Worker (JavaScript)
+          → POST raw email to ingest endpoint
+            → ingest.py extracts .ics attachment
+              → CalDAV PUT to correct Radicale collection
+```
+
+Each calendar gets its own email address. The Worker passes the destination address in the POST. `ingest.py` maps address to collection using `CALENDAR_MAP` in `config.env`. Adding a new calendar requires no code changes — run `provision-calendar.sh` and it handles everything.
 
 ---
 
@@ -25,33 +44,13 @@ Cloudflare Tunnel runs as a sidecar container alongside Radicale. It establishes
 - A domain registered with Namecheap
 - A Cloudflare account (free plan is sufficient)
 - A GitHub account
-
----
-
-## One-Time Manual Steps
-
-These two things cannot be scripted and must be done by hand before running anything.
-
-### Cloudflare Global API Key
-
-1. Log in to Cloudflare
-2. Go to https://dash.cloudflare.com/profile/api-tokens
-3. Scroll down to "Global API Key" and click "View"
-4. Copy the key
-
-### GitHub Personal Access Token
-
-1. Go to https://github.com/settings/tokens
-2. Click "Generate new token (classic)"
-3. Give it a name, set a short expiration (7 days is enough)
-4. Check the "repo" scope
-5. Click "Generate token" and copy it
+- An email provider that supports auto-forwarding (e.g. Proton Mail)
 
 ---
 
 ## Setup
 
-Run these steps in order. Do not skip ahead — each step depends on the previous one being complete.
+Run these steps in order.
 
 ### 1. Install dependencies
 
@@ -68,13 +67,11 @@ newgrp docker
 
 ### 2. Configure
 
-Copy the example config and fill in your values:
-
 ```bash
 cp config.env.example config.env
 ```
 
-Open `config.env` in your editor. Every field has a comment explaining what it expects. Fill in all values before proceeding. This includes the Cloudflare, Radicale, Proton, and GitHub sections. The `BRIDGE_IMAP_PORT` and `BRIDGE_IMAP_PASS` fields will be filled in automatically by `bridge-setup.sh` — leave them as-is for now.
+Fill in all values. Every field has a comment explaining what it expects. See the **Credentials** section below for where to find each one.
 
 ### 3. Run the main setup
 
@@ -84,124 +81,84 @@ chmod +x setup.sh
 ```
 
 This will:
-
 - Add your domain to Cloudflare and retrieve the assigned nameservers
-- Pause and give you a clickable link to your Namecheap domain management page with the exact nameserver values to enter
-- Poll until the Cloudflare zone becomes active after you save the change (can take minutes to a few hours)
+- Pause and give you a link to your Namecheap domain management page with the exact values to enter
+- Poll until the zone becomes active
 - Create a Cloudflare Tunnel
 - Create the DNS record for your subdomain
-- Write all config files
-- Create your Radicale user
-- Start the Docker stack
+- Write all config files and start the Docker stack
 
-### 4. Set up Proton Bridge and ICS sync
+### 4. Set up Email Routing
 
 ```bash
-chmod +x bridge-setup.sh
-./bridge-setup.sh
+chmod +x cloudflare-setup.sh
+./cloudflare-setup.sh
 ```
 
-This handles the one-time Bridge login interactively and sets up everything needed for automatic ICS sync. See the ICS Sync section below for full details on what this does and what to expect during the login step.
+This deploys the Email Worker to Cloudflare, sets its secrets, and creates routing rules for every address in your `CALENDAR_MAP`.
 
-### 5. Push to GitHub
+Then run the Docker stack to start the ingest service:
+
+```bash
+docker compose up -d --force-recreate
+```
+
+### 5. Set up auto-forward in your email provider
+
+For each address in your `CALENDAR_MAP`, create an auto-forward rule in your email provider that forwards matching emails to that address. This step is always manual since email providers do not expose APIs for forward rules.
+
+Test with: `docker logs ingest -f`
+
+### 6. Push to GitHub
 
 ```bash
 chmod +x github-setup.sh
 ./github-setup.sh
 ```
 
-This creates the repository, initialises git, and pushes everything except your credentials and data. Run this after `bridge-setup.sh` so that the `BRIDGE_IMAP_PORT` and `BRIDGE_IMAP_PASS` values written back to `config.env` are not accidentally staged — they are already covered by the `.gitignore`.
+---
+
+## Adding a New Calendar
+
+```bash
+./provision-calendar.sh -a newaddress@yourdomain.com -p /youruser/newcalendar/ -t vevent
+```
+
+Use `-t vtodo` for a task list instead of a calendar. The script creates the Cloudflare routing rule, the Radicale collection, and updates `CALENDAR_MAP` in `config.env`. Then restart the ingest container and add the Proton forward rule.
 
 ---
 
-## ICS Sync from Proton Mail
+## Credentials
 
-This project includes an automated pipeline that watches a folder in your Proton Mail account and pushes any .ics attachments it finds directly into Radicale. The intended workflow is: receive a calendar invite anywhere in your inbox, move the email to your designated sync folder, and within a few seconds the event appears in your calendar with no further action required.
+### Cloudflare Global API Key
+`dash.cloudflare.com/profile/api-tokens` → scroll down to "Global API Key" → View
 
-### Prerequisites
+### Cloudflare Zone ID and Account ID
+`dash.cloudflare.com` → select your domain → right sidebar
 
-- A paid Proton Mail plan (required for Bridge)
-- Proton Bridge installed (handled by `check-deps.sh`)
+### Cloudflare API Token (for Email Routing + Workers)
+`dash.cloudflare.com/profile/api-tokens` → Create Custom Token  
+Permissions needed:
+- Zone > Email Routing Rules > Edit
+- Zone > Zone > Read
+- Account > Workers Scripts > Edit
 
-### How it works
+### Ingest Token
+Generate with: `openssl rand -hex 32`  
+This is a shared secret between the Email Worker and `ingest.py`. Set it in `config.env` and `cloudflare-setup.sh` will push it to the Worker automatically.
 
-Proton Bridge runs as a background service and exposes a local IMAP interface on localhost that decrypts your Proton Mail on the fly. `goimapnotify` holds an IMAP IDLE connection open against that interface, watching only the folder you specify. The moment new mail arrives in that folder, goimapnotify fires `ics-sync.py`. The script extracts any .ics attachments, pushes each one to Radicale via a CalDAV PUT request, deletes the email from the folder, and records the Message-ID in a log file to prevent duplicate processing.
-
-No polling is involved. The sync fires on arrival.
-
-### One-time manual steps required before running bridge-setup.sh
-
-Bridge requires a secret-service compatible password manager on Linux. This project uses `pass`, which is installed by `check-deps.sh`. `pass` requires a GPG key, which `bridge-setup.sh` generates automatically using the passphrase you set in `config.env`.
-
-The one thing that cannot be scripted is the initial Bridge login, which requires your Proton Mail password and a 2FA TOTP code entered interactively.
-
-### Setup
-
-Run `bridge-setup.sh` after `check-deps.sh` and after filling in the Proton-related fields in `config.env`:
-
-```bash
-chmod +x bridge-setup.sh
-./bridge-setup.sh
-```
-
-The script will:
-
-1. Generate a GPG key using your `GPG_PASSPHRASE` and initialise `pass`
-2. Configure `gpg-agent` to cache the passphrase so Bridge runs unattended
-3. Start Bridge in CLI mode for the one-time interactive login
-4. List every available IMAP folder from Bridge so you can confirm the exact folder name to watch
-5. Save the confirmed folder name, IMAP port, and Bridge-generated IMAP password back to `config.env`
-6. Register Bridge as a systemd user service so it starts at boot
-7. Write the goimapnotify config pointing at your chosen folder
-8. Register goimapnotify as a systemd user service
-
-### Confirming the watched folder name
-
-During step 4, the script will print a list of every folder Bridge can see in your Proton Mail account, for example:
-
-```
-    Available folders:
-      INBOX
-      Drafts
-      Sent
-      Spam
-      Trash
-      CalendarImport
-```
-
-The folder name must match exactly, including capitalisation. If the folder you want does not appear in the list, create it in Proton Mail first and then re-run `bridge-setup.sh`.
-
-### Checking service status
-
-```bash
-systemctl --user status proton-bridge
-systemctl --user status goimapnotify
-```
-
-### The sync log
-
-Every successfully processed email has its Message-ID recorded in the file set by `ICS_SYNC_LOG` in `config.env`. The default path is `./logs/ics-sync.log` inside the project directory. Each line contains a UTC timestamp and the Message-ID:
-
-```
-2024-01-15 09:32:11  <CABx3+abc123@mail.gmail.com>
-```
-
-This log is the source of truth for deduplication. If an email is processed but the CalDAV PUT fails, it is not logged, and the next sync attempt will retry it. The log file is never committed to git.
+### GitHub Tokens
+Two tokens are needed — see the comments in `config.env.example` for exact steps.
 
 ---
 
 ## Connecting DAVx5 on Android
 
 1. Install DAVx5 from F-Droid or the Play Store
-2. Tap + and select "Login with URL and user name"
-3. Enter the following:
-   - URL: `https://<SUBDOMAIN>.<DOMAIN>/<RADICALE_USER>/`
-   - Username: the value of `RADICALE_USER` from your config
-   - Password: the value of `RADICALE_PASS` from your config
-4. DAVx5 will discover your address books and calendars automatically
-5. Select which collections to sync and tap the sync button
-
-For calendar display on Android, any app that reads local calendar accounts will work. Etar and Simple Calendar are both solid options.
+2. Tap + → "Login with URL and user name"
+3. URL: `https://<SUBDOMAIN>.<DOMAIN>/<RADICALE_USER>/`
+4. Username and password: values from `config.env`
+5. DAVx5 will discover your calendars automatically
 
 ---
 
@@ -211,91 +168,58 @@ For calendar display on Android, any app that reads local calendar accounts will
 .
 ├── check-deps.sh              # Installs all required system dependencies
 ├── setup.sh                   # Cloudflare, DNS, Radicale, and Docker stack setup
-├── bridge-setup.sh            # Proton Bridge, GPG, pass, and goimapnotify setup
-├── ics-sync.py                # Fired by goimapnotify, pushes .ics files to Radicale
+├── cloudflare-setup.sh        # Deploys Email Worker and creates routing rules
+├── provision-calendar.sh      # Adds a new calendar end-to-end
 ├── github-setup.sh            # Creates and pushes the GitHub repository
+├── ingest.py                  # HTTP server: receives emails, pushes .ics to Radicale
 ├── commit.sh                  # Stages, commits, and pushes using commit.msg
 ├── commit.msg.example         # Example commit message showing correct format
 ├── commit.msg                 # Your active commit message — never committed
 ├── config.env.example         # Template config — copy to config.env and fill in
 ├── config.env                 # Your real config — never committed
-├── config/
-│   ├── config                 # Radicale server config (generated by setup.sh)
-│   └── users                  # Radicale htpasswd file (generated by setup.sh)
-├── data/                      # Radicale calendar and contact storage
-├── logs/
-│   └── ics-sync.log           # ICS sync processing log (generated at runtime)
-├── cloudflared-config/
-│   ├── config.yml             # Cloudflare Tunnel ingress config (generated by setup.sh)
-│   └── creds/                 # Tunnel credential JSON (generated by setup.sh)
-└── docker-compose.yml         # Docker Compose config (generated by setup.sh)
+├── worker/
+│   ├── email-worker.js        # Cloudflare Email Worker source
+│   └── wrangler.toml          # Worker config
+├── agendav-config/            # AgenDAV configuration and entrypoint
+├── config/                    # Radicale server config and htpasswd file
+├── data/                      # Radicale calendar storage
+├── logs/                      # Runtime logs
+└── cloudflared-config/
+    ├── config.yml             # Cloudflare Tunnel ingress config
+    └── creds/                 # Tunnel credential JSON (never committed)
 ```
 
 ---
 
 ## What Is and Is Not Committed to Git
 
-The repository contains everything needed to reproduce a fresh deployment. It does not contain anything specific to your instance.
-
 Committed:
-- All scripts
+- All scripts and source files
 - `config.env.example`
-- Directory structure placeholders
+- Directory structure placeholders (`.gitkeep` files)
 
 Never committed:
 - `config.env` — contains real credentials
 - `commit.msg` — your active commit message, often mid-edit
 - `config/users` — contains hashed passwords
-- `cloudflared-config/creds/` — contains tunnel credentials
-- `data/` — contains your calendar and contact data
-- `logs/ics-sync.log` — runtime log, specific to your instance
+- `cloudflared-config/creds/` — contains tunnel credentials (treat like a private key)
+- `data/` — contains your calendar data
+- `logs/*.log` — runtime logs
+- `worker/.wrangler/` — Wrangler cache, contains account metadata
 
 ---
 
 ## Making Changes and Committing
 
-This project includes a simple commit workflow that keeps things consistent. Rather than typing commit messages on the command line, you write your message in `commit.msg` and run `commit.sh`.
-
-### The commit message file
-
-Copy the example file to get started:
-
-```bash
-cp commit.msg.example commit.msg
-```
-
-`commit.msg` follows the standard two-part git format:
+Write your message in `commit.msg` and run `commit.sh`. The format is standard two-part git:
 
 ```
-Short summary of the change, 50 characters or less
+Short summary under 50 characters
 
-Longer description explaining what changed and why. Wrap lines at
-72 characters. You can have multiple paragraphs separated by blank
-lines if the change warrants it.
+Body explaining what changed and why, wrapped at 72 characters.
 ```
 
-Lines beginning with `#` are comments and are ignored by git. The file ships with a comment block explaining the format — just write your message above or below the comments.
-
-### Running the commit script
-
-```bash
-./commit.sh
-```
-
-The script will:
-
-1. Read `commit.msg` and strip comments
-2. Validate that the message is not empty
-3. Warn if the subject line exceeds 50 characters (but will not block)
-4. Stage all changes
-5. Show you exactly which files are being committed
-6. Commit using the message from `commit.msg`
-7. Push to the remote
-8. Clear `commit.msg` back to the comment block only, ready for next use
-
-### Important clearing behaviour
-
-The file is only cleared after a successful commit and push. If either step fails, `commit.msg` is left untouched so you do not lose your message. Once cleared, the file remains present in the working tree so git never sees a deletion — it just contains the comment block with no active message.
+`commit.msg` is cleared automatically after a successful push. See `commit.msg.example` for the format.
 
 ---
 
